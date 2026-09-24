@@ -1,0 +1,8 @@
+{
+  "name": "POS App",
+  "description": "An interactive, tablet-ready Point-of-Sale (POS) dashboard featuring order tracking, payment processing, menu and table management, live kitchen KOT feeds, reports, settings, and team tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
