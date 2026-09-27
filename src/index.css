@@ -20,6 +20,27 @@ html {
   text-size-adjust: 100%;
 }
 
+/* ── Responsive foundation ────────────────────────────────────────────────
+   The POS runs as a web app on Android tablets/phones (Capacitor) as well as
+   desktop browsers. These globals keep every screen inside the viewport and
+   out from under Android/iOS system UI (notch, gesture bar) without any
+   per-screen duplicate styling. */
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+/* Content clears browser/Android system UI — e.g. the fixed API-error
+   banner (top-16) and bottom toasts never sit under a notch/gesture bar. */
+.pt-safe { padding-top: max(0px, env(safe-area-inset-top)); }
+.pb-safe { padding-bottom: max(0px, env(safe-area-inset-bottom)); }
+.px-safe {
+  padding-left: max(0px, env(safe-area-inset-left));
+  padding-right: max(0px, env(safe-area-inset-right));
+}
+
+
 body {
   background-color: #F8FAFC;
   color: #111827;

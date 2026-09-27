@@ -118,7 +118,9 @@ const LoadingSkeleton = ({ count = 3 }) => (
 );
 
 const FormGrid = ({ children, cols = 2 }) => {
-  const colClass = cols === 4 ? 'md:grid-cols-4' : cols === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2';
+  // Mobile: 1 column · ≥sm (tablet portrait 768px+): 2 columns · md+: 3–4 columns.
+  // Keeps long forms readable on narrow screens without touching field logic.
+  const colClass = cols === 4 ? 'sm:grid-cols-2 md:grid-cols-4' : cols === 3 ? 'sm:grid-cols-2 md:grid-cols-3' : 'sm:grid-cols-2';
   return (
     <div className={`grid grid-cols-1 ${colClass} gap-3`}>
       {children}
@@ -983,12 +985,12 @@ export default function SettingsPage() {
       {/* Add Printer Modal */}
       {showPrinterModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs" onClick={() => setShowPrinterModal(false)}>
-          <div className="bg-white w-full max-w-sm rounded-xl shadow-xl border border-slate-100" onClick={(e) => e.stopPropagation()}>
-            <div className="px-4 py-3 bg-slate-50 border-b border-slate-100 flex justify-between items-center rounded-t-xl">
+          <div className="bg-white w-full max-w-sm rounded-xl shadow-xl border border-slate-100 max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 bg-slate-50 border-b border-slate-100 flex justify-between items-center rounded-t-xl shrink-0">
               <h4 className="font-extrabold text-xs uppercase tracking-wider text-slate-800">Register Printer</h4>
               <button onClick={() => setShowPrinterModal(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer" type="button"><X className="w-4 h-4" /></button>
             </div>
-            <div className="p-4 space-y-3 text-xs">
+            <div className="p-4 space-y-3 text-xs overflow-y-auto">
               <div className="space-y-1">
                 <label className="text-[9px] font-bold uppercase text-slate-400">Printer Name *</label>
                 <input value={printerForm.name} onChange={(e) => setPrinterForm(p => ({ ...p, name: e.target.value }))} placeholder="e.g., Kitchen Printer" className="w-full h-8 px-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-[#16A34A] transition-all" />

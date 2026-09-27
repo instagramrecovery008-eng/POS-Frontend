@@ -591,14 +591,17 @@ export function generateKotHtml({
 }
 
 /**
- * Open a print preview for a KOT in a new window
+ * Open a print preview for a KOT in a new window.
+ * @returns {boolean} true when the print window opened and the KOT print was
+ *   initiated; false when the browser blocked the popup (caller can keep the
+ *   current screen/state instead of advancing the flow).
  */
 export function openKotPrintPreview(kotData) {
   const html = generateKotHtml(kotData);
   const printWindow = window.open('', '_blank', 'width=400,height=600,scrollbars=yes');
   if (!printWindow) {
     alert('Please allow pop-ups to print the KOT.');
-    return;
+    return false;
   }
   // document.write on a just-opened window can race the initial about:blank
   // load (the popup stays blank). Writing after load (or immediately when
@@ -617,6 +620,7 @@ export function openKotPrintPreview(kotData) {
   } else {
     writeKot();
   }
+  return true;
 }
 
 /**

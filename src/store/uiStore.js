@@ -8,6 +8,14 @@ const useUiStore = create((set) => ({
   setSidebarCollapsed: (collapsed) =>
     set({ sidebarCollapsed: collapsed }),
 
+  // Mobile navigation drawer (< lg viewports — tablet portrait / mobile).
+  // The SAME Sidebar component renders as an off-canvas overlay below lg;
+  // this flag only controls its visibility. No duplicate nav logic.
+  mobileNavOpen: false,
+  setMobileNavOpen: (open) => set({ mobileNavOpen: !!open }),
+  toggleMobileNav: () =>
+    set((state) => ({ mobileNavOpen: !state.mobileNavOpen })),
+
   // Terminal Lock (controls whether user sees login or dashboard)
   isUnlocked: !!localStorage.getItem('pos_token'),
   setUnlocked: (val) => set({ isUnlocked: val }),

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   LayoutDashboard,
   UtensilsCrossed,
@@ -14,6 +14,7 @@ import {
   ChevronRight,
   LogOut,
   Lock,
+  X,
 } from 'lucide-react';
 import AppLogo from '../../common/AppLogo';
 import { cn } from '../../../lib/utils';
@@ -62,12 +63,13 @@ function getOrderNavItem(businessMode, enablePosOrdering, settings) {
 }
 
 export default function Sidebar() {
-  const { sidebarCollapsed, toggleSidebar, currentScreen, setScreen } = useUiStore();
+  const { sidebarCollapsed, toggleSidebar, currentScreen, setScreen, mobileNavOpen, setMobileNavOpen } = useUiStore();
   const { user, subscription, logout, lockTerminal, staffPermissions } = useAuthStore();
   const { settings } = useSettingsStore();
   const { setOrders } = useCartStore();
 
   const handleLogout = () => {
+    setMobileNavOpen(false);
     setScreen('login');
     setOrders([]);
     logout();
@@ -147,13 +149,137 @@ export default function Sidebar() {
     return true;
   });
 
+  // ── Mobile drawer: close on Escape + lock body scroll while open ──
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const onKey = (e) => { if (e.key === 'Escape') setMobileNavOpen(false); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
+  }, [mobileNavOpen, setMobileNavOpen]);
+
+  // Shared nav-item renderer — one markup for rail, expanded and drawer modes.
+  const renderNavItem = (item) => (
+    <button
+      key={item.screen}
+      onClick={() => {
+        setScreen(item.screen);
+        setMobileNavOpen(false); // navigating from the drawer always dismisses it
+      }}
+      title={item.label}
+      className={cn(
+        'w-full flex items-center gap-2.5 px-3 py-3 text-xs font-semibold rounded-lg transition-all min-h-11 cursor-pointer',
+        currentScreen === item.screen
+          ? 'bg-[#16A34A] text-white font-bold'
+          : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+      )}
+    >
+      <item.icon className="w-4.5 h-4.5 shrink-0" />
+      {/* Drawer & expanded-desktop show labels; the compact rail hides them */}
+      <span className={cn('truncate', !mobileNavOpen && (sidebarCollapsed ? 'hidden' : 'hidden xl:block'))}>
+        {item.label}
+      </span>
+    </button>
+  );
+
+  const renderBottomActions = () => (
+    <>
+      <button
+        onClick={() => { setMobileNavOpen(false); lockTerminal(currentScreen); }}
+        title="Lock Screen"
+        className="w-full flex items-center gap-2.5 px-3 py-3 min-h-11 text-xs font-bold text-slate-400 hover:bg-slate-800 hover:text-white rounded-lg transition-colors cursor-pointer"
+      >
+        <Lock className="w-4.5 h-4.5 shrink-0" />
+        <span className={cn('truncate', !mobileNavOpen && (sidebarCollapsed ? 'hidden' : 'hidden xl:block'))}>Lock Screen</span>
+      </button>
+      <button
+        onClick={handleLogout}
+        title="Log Out"
+        className="w-full flex items-center gap-2.5 px-3 py-3 min-h-11 text-xs font-bold text-red-400 hover:bg-red-500/10 hover:text-red-300 rounded-lg transition-colors cursor-pointer"
+      >
+        <LogOut className="w-4.5 h-4.5 shrink-0" />
+        <span className={cn('truncate', !mobileNavOpen && (sidebarCollapsed ? 'hidden' : 'hidden xl:block'))}>Log Out</span>
+      </button>
+    </>
+  );
+
+  // ── Mobile / tablet-portrait drawer (< lg): off-canvas overlay ──
+  // The desktop rail below never renders labels under lg, so <lg screens use
+  // this full navigation instead of the desktop UI squeezed onto a phone.
+  if (mobileNavOpen) {
+    return (
+      <>
+        {/* Backdrop */}
+        <div
+          className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px] lg:hidden animate-fade-in"
+          onClick={() => setMobileNavOpen(false)}
+          aria-hidden="true"
+        />
+        <aside
+          className={cn(
+            'fixed inset-y-0 left-0 w-72 max-w-[85vw] bg-[#111827] border-r border-slate-800',
+            'shadow-2xl h-full py-4 pb-safe flex flex-col justify-between z-50 transition-transform duration-300 lg:hidden',
+            mobileNavOpen ? 'translate-x-0' : '-translate-x-full'
+          )}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Navigation"
+        >
+          <div className="space-y-4 min-h-0">
+            {/* Logo & Close */}
+            <div className="px-3 flex items-center justify-between gap-2 h-10">
+              <div className="flex items-center gap-2 min-w-0">
+                <AppLogo
+                  src={settings.branding.sidebarLogo}
+                  name={settings.branding.restaurantName || 'POS'}
+                  size="sm"
+                />
+                <span className="font-extrabold text-xs text-white tracking-tight truncate uppercase leading-none">
+                  {settings.branding.restaurantName || 'POS'}
+                </span>
+              </div>
+              <button
+                onClick={() => setMobileNavOpen(false)}
+                aria-label="Close navigation"
+                className="p-2 -mr-1 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-4.5 h-4.5" />
+              </button>
+            </div>
+
+            {/* Navigation (scrollable when the list outgrows short screens) */}
+            <nav className="space-y-1 px-2 overflow-y-auto max-h-[calc(100vh-14rem)]">
+              {filteredNav.map(renderNavItem)}
+            </nav>
+          </div>
+
+          {/* Bottom actions */}
+          <div className="px-2 space-y-1 shrink-0">
+            {renderBottomActions()}
+          </div>
+        </aside>
+      </>
+    );
+  }
+
+  // ── Desktop / tablet-landscape persistent sidebar ──
+  // < md (phones): NO persistent sidebar — navigation is the off-canvas drawer
+  //   via the header hamburger (spec: never squeeze the desktop sidebar onto a
+  //   small mobile screen).
+  // md–lg (tablet portrait/landscape phones): compact 64px icon rail + drawer
+  //   available, so the primary POS target keeps maximum content width.
+  // lg:  rail, expandable via the existing collapse toggle.
+  // xl+: expanded 224px by default (unchanged desktop experience).
   return (
     <aside
       className={cn(
-        'bg-[#111827] border-r border-slate-800 shadow-[2px_0_12px_rgba(0,0,0,0.15)] h-screen sticky top-0 py-4 flex flex-col justify-between z-30 transition-all duration-300 shrink-0',
+        'bg-[#111827] border-r border-slate-800 shadow-[2px_0_12px_rgba(0,0,0,0.15)] h-screen sticky top-0 py-4 hidden md:flex flex-col justify-between z-30 transition-all duration-300 shrink-0',
         // On small screens (< lg) always render the compact icon rail so tablet
-        // portrait & mobile keep maximum space for content; full width only on lg+
-        sidebarCollapsed ? 'w-16' : 'w-16 lg:w-56'
+        // portrait & mobile keep maximum space for content; full width only on xl+
+        sidebarCollapsed ? 'w-16' : 'w-16 xl:w-56'
       )}
     >
       <div className="space-y-4">
@@ -166,7 +292,7 @@ export default function Sidebar() {
               size="sm"
             />
             {!sidebarCollapsed && (
-              <span className="hidden lg:block font-extrabold text-xs text-white tracking-tight truncate uppercase leading-none">
+              <span className="hidden xl:block font-extrabold text-xs text-white tracking-tight truncate uppercase leading-none">
                 {settings.branding.restaurantName || 'POS'}
               </span>
             )}
@@ -174,7 +300,7 @@ export default function Sidebar() {
           <button
             onClick={toggleSidebar}
             aria-label="Toggle sidebar"
-            className="hidden lg:flex p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-200 cursor-pointer"
+            className="hidden xl:flex p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-200 cursor-pointer"
           >
             {sidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
           </button>
@@ -195,7 +321,7 @@ export default function Sidebar() {
               )}
             >
               <item.icon className="w-4.5 h-4.5 shrink-0" />
-              {!sidebarCollapsed && <span className="hidden lg:block truncate">{item.label}</span>}
+              {!sidebarCollapsed && <span className="hidden xl:block truncate">{item.label}</span>}
             </button>
           ))}
         </nav>
@@ -209,7 +335,7 @@ export default function Sidebar() {
           className="w-full flex items-center gap-2.5 px-3 py-3 min-h-11 text-xs font-bold text-slate-400 hover:bg-slate-800 hover:text-white rounded-lg transition-colors cursor-pointer"
         >
           <Lock className="w-4.5 h-4.5 shrink-0" />
-          {!sidebarCollapsed && <span className="hidden lg:block">Lock Screen</span>}
+          {!sidebarCollapsed && <span className="hidden xl:block">Lock Screen</span>}
         </button>
         <button
           onClick={handleLogout}
@@ -217,7 +343,7 @@ export default function Sidebar() {
           className="w-full flex items-center gap-2.5 px-3 py-3 min-h-11 text-xs font-bold text-red-400 hover:bg-red-500/10 hover:text-red-300 rounded-lg transition-colors cursor-pointer"
         >
           <LogOut className="w-4.5 h-4.5 shrink-0" />
-          {!sidebarCollapsed && <span className="hidden lg:block">Log Out</span>}
+          {!sidebarCollapsed && <span className="hidden xl:block">Log Out</span>}
         </button>
       </div>
     </aside>

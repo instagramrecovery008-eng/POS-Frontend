@@ -623,9 +623,9 @@ export default function AppShell() {
 
       {/* API Error Banner */}
       {apiError && (
-        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 bg-red-50 border border-red-200 rounded-xl shadow-lg px-4 py-3 flex items-center gap-2 text-xs text-red-700 font-semibold max-w-lg animate-slide-down">
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 bg-red-50 border border-red-200 rounded-xl shadow-lg px-4 py-3 flex items-center gap-2 text-xs text-red-700 font-semibold max-w-lg w-[calc(100vw-2rem)] animate-slide-down">
           <AlertTriangle className="w-4 h-4 shrink-0 text-red-500" />
-          <span className="flex-1">{apiError}</span>
+          <span className="flex-1 min-w-0">{apiError}</span>
           <button
             onClick={clearApiError}
             className="p-1 hover:bg-red-100 rounded text-red-500 cursor-pointer"
@@ -635,8 +635,9 @@ export default function AppShell() {
         </div>
       )}
 
-      {/* Toast Notifications */}
-      <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none select-none max-w-sm">
+      {/* Toast Notifications — inset on small screens so they never overflow
+          a 360px phone or sit under Android gesture-bar UI */}
+      <div className="fixed bottom-4 right-4 left-4 sm:left-auto z-50 flex flex-col gap-2 pointer-events-none select-none max-w-sm pb-safe">
         {toasts.map((toast) => (
           <div
             key={toast.id}

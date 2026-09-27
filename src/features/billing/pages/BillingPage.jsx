@@ -2128,7 +2128,7 @@ export default function BillingPage() {
           />
         )}
         {showStickyBar && (
-          <div className="lg:hidden shrink-0 border-t border-slate-200 bg-white px-3 pt-2 pb-2.5 space-y-2 shadow-[0_-6px_16px_rgba(44,62,80,0.08)]">
+          <div className="lg:hidden shrink-0 border-t border-slate-200 bg-white px-3 pt-2 pb-2.5 space-y-2 shadow-[0_-6px_16px_rgba(44,62,80,0.08)] pb-safe">
             {/* Cashier Discount — kept accessible on portrait & mobile */}
             {discountAmount > 0 ? (
               <AppliedDiscount

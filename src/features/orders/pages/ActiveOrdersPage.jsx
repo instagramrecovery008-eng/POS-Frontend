@@ -1099,8 +1099,9 @@ Items: ${itemsCount}`, 'info');
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="flex gap-0.5 bg-slate-100 p-0.5 rounded-xl">
+        {/* Tabs — internally scrollable on narrow phones where 4 labels
+            cannot fit side by side (page itself never overflows) */}
+        <div className="flex gap-0.5 bg-slate-100 p-0.5 rounded-xl overflow-x-auto no-scrollbar">
           {tabs.filter(t => t.setting ? settings[t.setting] !== false : true).map(tab => (
             <button key={tab.key} onClick={() => setOrdersActiveTab(tab.key)}
               className={`flex-1 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 ${

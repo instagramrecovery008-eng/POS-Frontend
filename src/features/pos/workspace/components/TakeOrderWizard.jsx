@@ -667,8 +667,11 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
 
       // Open KOT print preview using shared service
       // For new orders, print from cart items (the auto-KOT contains ALL items)
+      // openKotPrintPreview returns false when the browser blocked the popup —
+      // the caller must know whether printing actually started.
+      let printInitiated = false;
       try {
-        openKotPrintPreview({
+        printInitiated = openKotPrintPreview({
           restaurantName: settings?.branding?.restaurantName || '',
           kotNo: kotNo || 'N/A',
           orderNo: orderData.orderNo || String(orderData.id),
@@ -704,11 +707,22 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
       });
 
       incrementRefreshTrigger();
-      setActionSuccess('kot');
       addToast(`KOT created for Order ${orderData.orderNo || orderData.id}!`, 'success');
-      setShowTakeOrderWizard(false);
-      const prevScreen = previousScreenRef.current;
-      if (prevScreen && prevScreen !== 'order_taking') setScreen(prevScreen);
+
+      if (!printInitiated) {
+        // Popup blocked / preview could not open: the KOT exists, but per the
+        // existing error handling (service alert + warning toast above) the
+        // user stays on Review with working navigation — never silently
+        // advanced to Step 1 as if printing had happened.
+        return;
+      }
+
+      // Print initiated successfully → restart the SAME wizard at Step 1
+      // (Order Type) by reusing its own open routine (resetWizard clears the
+      // completed cart/order-type/floor/table state, then data reloads). The
+      // created order/KOT are untouched: no payment opens, no second order
+      // and no second KOT are created.
+      await loadInitialData();
     } catch (e) {
       const msg = e?.response?.data?.message || e?.message || 'Failed to create order';
       addToast(msg, 'error');
@@ -1653,6 +1667,8 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
 
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in">
+      {/* Full-bleed on phones; inset rounded card from sm up (portrait tablets
+          get the same card at a comfortable width without touching screen edges) */}
       <div className="bg-white w-full h-full sm:h-[95vh] sm:max-w-4xl sm:rounded-2xl sm:shadow-2xl sm:mx-4 flex flex-col overflow-hidden">
         {wizardContent}
       </div>

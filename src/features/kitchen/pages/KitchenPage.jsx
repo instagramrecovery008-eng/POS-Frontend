@@ -172,9 +172,9 @@ export default function KitchenPage() {
   }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 animate-fade-in max-w-7xl mx-auto md:h-[calc(100vh-80px)] md:min-h-0">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 animate-fade-in max-w-7xl mx-auto lg:h-[calc(100vh-80px)] lg:min-h-0">
       {/* Left Pane: KOT Ticket List */}
-      <div className="md:col-span-1 bg-white rounded-[18px] border border-slate-200 p-3.5 flex flex-col gap-3 md:h-full min-h-0 shadow-xs">
+      <div className="lg:col-span-1 bg-white rounded-[18px] border border-slate-200 p-3.5 flex flex-col gap-3 lg:h-full min-h-0 shadow-xs">
         {/* Search */}
         <div className="flex items-center gap-2 shrink-0">
           <div className="relative flex-1">
@@ -213,8 +213,8 @@ export default function KitchenPage() {
           ))}
         </div>
 
-        {/* Ticket list — independent scroll */}
-        <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1">
+      {/* Ticket list — independent scroll */}
+      <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1 lg:max-h-none max-h-[60vh]">
           {filteredKots.map((kot) => {
             const isSelected = selectedKot?.id === kot.id;
             const itemCount = kot.order?.orderItems?.length || 0;
@@ -263,7 +263,7 @@ export default function KitchenPage() {
       </div>
 
       {/* Right Pane: KOT Detail — viewport-bound flex column */}
-      <div className="md:col-span-2 bg-white rounded-[20px] border border-slate-200 p-5 flex flex-col md:h-full min-h-0 shadow-xs">
+      <div className="lg:col-span-2 bg-white rounded-[20px] border border-slate-200 p-5 flex flex-col lg:h-full min-h-0 shadow-xs">
         {selectedKot ? (
           <div className="flex flex-col h-full min-h-0">
             {/* Header — fixed, never scrolls */}

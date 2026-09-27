@@ -67,6 +67,14 @@ export default function PosWorkspace() {
   // Submit-in-progress state for Place Order / Payment (prevents double taps)
   const [submitting, setSubmitting] = useState(null); // null | 'place' | 'pay'
 
+  // ── Responsive cart access (< lg viewports) ──
+  // Tablet portrait & mobile keep the FULL product grid; the cart lives in a
+  // bottom sheet so it is always one thumb-tap away. lg+ keeps the existing
+  // side-by-side cart rail. Cart data/actions are the same state — only the
+  // presentation changes per viewport, no second cart engine.
+  const [cartOpen, setCartOpen] = useState(false);
+  const cartCount = cartItems.reduce((s, i) => s + i.quantity, 0);
+
   // §2/§9: BASIC_POS quick-billing vs production mode.
   // - A QUICK_BILLING retail tenant is ALWAYS quick billing (no kitchen
   //   capability — the toggle never re-introduces restaurant behavior).
@@ -420,6 +428,7 @@ export default function PosWorkspace() {
   };
 
   // ── Select a category → show its items ──
+  // (cart drawer body-scroll lock lives in the sheet's own effect below)
   const selectCategory = (name) => {
     setSelectedCategory(name);
     setSelectedSubcategory(SUBCATEGORY_ALL); // category change resets subcategory (Part 2 req. 3)
@@ -490,7 +499,7 @@ export default function PosWorkspace() {
   // ── Category picker view (large touch cards) ──
   const renderCategories = () => (
     <div className="flex-1 overflow-y-auto pr-0.5">
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3.5">
         {catsWithItems.map((cat) => (
           <button
             key={cat.id}
@@ -524,7 +533,7 @@ export default function PosWorkspace() {
   // ── Items view (large touch cards for the selected category) ──
   const renderItems = () => (
     <div className="flex-1 overflow-y-auto pr-0.5">
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-3">
         {filteredItems.map((item) => {
           const outOfStock = item.currentStock !== null && item.currentStock !== undefined && item.currentStock <= 0;
           const lowStock = !outOfStock && item.currentStock !== null && item.currentStock < 10;
@@ -544,9 +553,9 @@ export default function PosWorkspace() {
                 <img src={item.image} alt={item.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" loading="lazy" decoding="async"
                   onError={(e) => { e.target.src = PLACEHOLDER_IMAGE; }} />
                 {isDietaryBusiness && (
-                <span className="absolute top-1.5 left-1.5 w-4 h-4 rounded-sm border-2 flex items-center justify-center bg-white/90 ${
+                <span className={`absolute top-1.5 left-1.5 w-4 h-4 rounded-sm border-2 flex items-center justify-center bg-white/90 ${
                   item.isVeg ? 'border-emerald-600' : 'border-red-600'
-                }">
+                }`}>
                   <span className={`w-2 h-2 rounded-full ${item.isVeg ? 'bg-emerald-600' : 'bg-red-600'}`} />
                 </span>
                 )}
@@ -582,9 +591,9 @@ export default function PosWorkspace() {
   );
 
   return (
-    <div className="flex flex-col md:flex-row gap-4 md:h-[calc(100vh-120px)] animate-fade-in">
+    <div className="flex flex-col lg:flex-row gap-4 lg:h-[calc(100vh-120px)] animate-fade-in pb-20 lg:pb-0">
       {/* Left: Category / Item area */}
-      <div className="flex-1 flex flex-col gap-3 md:overflow-hidden min-w-0">
+      <div className="flex-1 flex flex-col gap-3 lg:overflow-hidden min-w-0">
         {/* Header */}
         <div className="flex items-center gap-3 shrink-0">
           {view === 'items' ? (
@@ -675,8 +684,11 @@ export default function PosWorkspace() {
         )}
       </div>
 
-      {/* Right: Cart — full width below the grid on mobile, wider fixed rail on md+ for touch comfort */}
-      <div className="w-full md:w-[340px] lg:w-[380px] xl:w-[420px] md:h-full bg-white rounded-[18px] border border-slate-200 shadow-xs flex flex-col overflow-hidden shrink-0 md:min-h-0">
+      {/* Right: Cart rail — side-by-side on lg+ (tablet landscape / desktop).
+          Below lg the cart renders as a bottom sheet (see mobileCart below) so
+          tablet portrait / mobile get the full-width product grid instead of a
+          squeezed two-column layout. Same cart state, same actions. */}
+      <div className="hidden lg:flex w-[340px] xl:w-[400px] 2xl:w-[440px] lg:h-full bg-white rounded-[18px] border border-slate-200 shadow-xs flex-col overflow-hidden shrink-0 lg:min-h-0">
         {/* Cart Header */}
         <div className="px-4 py-3 border-b border-slate-100 bg-slate-50">
           <div className="flex items-center justify-between mb-2">
@@ -789,10 +801,10 @@ export default function PosWorkspace() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
           <div className="bg-white w-full max-w-xs rounded-xl shadow-xl border border-slate-100 p-4 space-y-3">
             <h4 className="text-xs font-extrabold text-slate-800">Add Note</h4>
-            <input value={itemNotes} onChange={(e) => setItemNotes(e.target.value)} placeholder="e.g., Less spicy, extra cheese..." className="w-full h-9 px-2 bg-slate-50 border rounded-lg text-xs outline-none" />
+            <input value={itemNotes} onChange={(e) => setItemNotes(e.target.value)} placeholder="e.g., Less spicy, extra cheese..." className="w-full h-10 px-2 bg-slate-50 border rounded-lg text-xs outline-none" />
             <div className="flex gap-2">
-              <button onClick={() => setNoteForItem(null)} className="flex-1 h-8 border rounded-lg text-xs font-bold text-slate-500 cursor-pointer">Cancel</button>
-              <button onClick={() => setItemNote(noteForItem, itemNotes)} className="flex-[2] h-8 bg-[#16A34A] text-white rounded-lg text-xs font-bold cursor-pointer">Save</button>
+              <button onClick={() => setNoteForItem(null)} className="flex-1 h-10 border rounded-lg text-xs font-bold text-slate-500 cursor-pointer">Cancel</button>
+              <button onClick={() => setItemNote(noteForItem, itemNotes)} className="flex-[2] h-10 bg-[#16A34A] text-white rounded-lg text-xs font-bold cursor-pointer">Save</button>
             </div>
           </div>
         </div>
@@ -806,17 +818,229 @@ export default function PosWorkspace() {
             <div className="space-y-2">
               <div className="relative">
                 <User className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="Customer name" className="w-full pl-8 h-8 bg-slate-50 border rounded-lg text-xs outline-none" />
+                <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="Customer name" className="w-full pl-8 h-10 bg-slate-50 border rounded-lg text-xs outline-none" />
               </div>
               <div className="relative">
                 <Phone className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} placeholder="Phone number" className="w-full pl-8 h-8 bg-slate-50 border rounded-lg text-xs outline-none" />
+                <input value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} placeholder="Phone number" inputMode="tel" className="w-full pl-8 h-10 bg-slate-50 border rounded-lg text-xs outline-none" />
               </div>
             </div>
-            <button onClick={() => setShowCustomerModal(false)} className="w-full h-8 bg-[#16A34A] text-white rounded-lg text-xs font-bold cursor-pointer">Done</button>
+            <button onClick={() => setShowCustomerModal(false)} className="w-full h-10 bg-[#16A34A] text-white rounded-lg text-xs font-bold cursor-pointer">Done</button>
           </div>
         </div>
       )}
+
+      {/* ══ Responsive cart for tablet portrait & mobile (< lg) ══
+          Sticky summary bar + expandable bottom sheet. Hidden at lg+ where
+          the side rail above is the cart surface. Same state, same actions. */}
+      <MobileCart
+        open={cartOpen}
+        onToggle={() => setCartOpen((v) => !v)}
+        onClose={() => setCartOpen(false)}
+        items={cartItems}
+        count={cartCount}
+        subtotal={subtotal}
+        discount={discount}
+        total={total}
+        currency={currency}
+        counterSaleMode={counterSaleMode}
+        isBasicPos={isBasicPos}
+        canBill={canBill}
+        tablesCapable={tablesCapable}
+        floorManagementOff={floorManagementOff}
+        submitting={submitting}
+        activeOrderTakingId={activeOrderTakingId}
+        orderType={orderType}
+        setOrderType={setOrderType}
+        guestCount={guestCount}
+        setGuestCount={setGuestCount}
+        customerName={customerName}
+        setShowCustomerModal={setShowCustomerModal}
+        updateQty={updateQty}
+        removeFromCart={removeFromCart}
+        setNoteForItem={setNoteForItem}
+        setItemNotes={setItemNotes}
+        onClear={() => setCartItems([])}
+        onPlaceOrder={handlePlaceOrder}
+        onPayment={handlePayment}
+        ICON_MAP={ICON_MAP}
+      />
     </div>
+  );
+}
+
+// ═══ Mobile / tablet-portrait cart (< lg) ═══════════════════════════════════
+// Rendered as a sticky bottom bar + full bottom-sheet on viewports below lg.
+// Owns NO state — every value and handler comes from PosWorkspace, so cart,
+// totals and payment behavior are byte-identical to the desktop rail.
+function MobileCart({
+  open, onToggle, onClose,
+  items, count, subtotal, discount, total, currency,
+  counterSaleMode, isBasicPos, canBill, tablesCapable, floorManagementOff,
+  submitting, activeOrderTakingId, orderType, setOrderType,
+  guestCount, setGuestCount, customerName, setShowCustomerModal,
+  updateQty, removeFromCart, setNoteForItem, setItemNotes,
+  onClear, onPlaceOrder, onPayment, ICON_MAP,
+}) {
+  // Lock page scroll while the sheet is expanded
+  React.useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open, onClose]);
+
+  const payVisible = canBill && (counterSaleMode || tablesCapable);
+
+  return (
+    <>
+      {/* Sticky summary bar — tap to open the cart sheet */}
+      {!open && (
+        <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-slate-200 shadow-[0_-6px_16px_rgba(44,62,80,0.10)] px-3 pt-2 pb-safe">
+          <button
+            onClick={onToggle}
+            className="w-full flex items-center justify-between gap-3 py-2 cursor-pointer"
+            aria-label="Open cart"
+          >
+            <span className="flex items-center gap-2 min-w-0">
+              <span className="relative shrink-0 w-10 h-10 rounded-xl bg-[#16A34A] text-white flex items-center justify-center">
+                <ShoppingCart className="w-5 h-5" />
+                {count > 0 && (
+                  <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-slate-900 text-white text-[9px] font-extrabold flex items-center justify-center">{count}</span>
+                )}
+              </span>
+              <span className="min-w-0 text-left">
+                <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">{counterSaleMode ? 'Counter Sale' : 'Order'}</span>
+                <span className="block text-[11px] font-bold text-slate-600 truncate">
+                  {count > 0 ? `${count} item${count === 1 ? '' : 's'}` : 'Cart is empty — tap items to add'}
+                </span>
+              </span>
+            </span>
+            <span className="flex items-center gap-2 shrink-0">
+              <span className="font-mono font-extrabold text-base text-[#16A34A]">{currency}{total.toFixed(0)}</span>
+              <ChevronLeft className="w-4 h-4 text-slate-400 rotate-90" />
+            </span>
+          </button>
+        </div>
+      )}
+
+      {/* Bottom sheet */}
+      {open && (
+        <div className="lg:hidden fixed inset-0 z-50 flex items-end justify-center">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px] animate-fade-in" onClick={onClose} aria-hidden="true" />
+          <div className="relative w-full max-h-[88vh] bg-white rounded-t-[20px] shadow-2xl border-t border-x border-slate-200 flex flex-col animate-slide-up">
+            {/* Grab handle + header */}
+            <div className="shrink-0 px-4 pt-2 pb-3 border-b border-slate-100 bg-slate-50 rounded-t-[20px]">
+              <div className="w-10 h-1 rounded-full bg-slate-300 mx-auto mb-2.5" />
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-extrabold text-slate-800 uppercase flex items-center gap-1.5">
+                  <ShoppingCart className="w-4 h-4 text-[#16A34A]" /> {counterSaleMode ? 'Counter Sale' : 'Order'} ({items.length})
+                </h3>
+                <div className="flex items-center gap-1">
+                  {!counterSaleMode && !floorManagementOff && (
+                    <div className="flex bg-slate-200 p-0.5 rounded-lg text-[9px] font-bold">
+                      {['Dine In', 'Takeaway', 'Parcel'].map((type) => (
+                        <button key={type} onClick={() => setOrderType(type)}
+                          className={`px-2 py-1.5 rounded cursor-pointer ${orderType === type ? 'bg-white text-slate-800 shadow-xs' : 'text-slate-500'}`}>{type === 'Dine In' ? 'Dine' : type === 'Takeaway' ? 'Take' : 'Parcel'}</button>
+                      ))}
+                    </div>
+                  )}
+                  <button onClick={onClose} aria-label="Close cart"
+                    className="p-2 -mr-1 rounded-lg text-slate-400 hover:bg-slate-200 hover:text-slate-600 cursor-pointer">
+                    <X className="w-4.5 h-4.5" />
+                  </button>
+                </div>
+              </div>
+              {!counterSaleMode && (
+                <div className="flex items-center gap-2 mt-2">
+                  <div className="flex items-center bg-white border rounded-lg text-[10px] font-bold">
+                    <button onClick={() => setGuestCount((p) => Math.max(1, p - 1))} aria-label="Fewer guests" className="px-3 py-2 hover:bg-slate-50 cursor-pointer"><Minus className="w-3.5 h-3.5" /></button>
+                    <span className="px-2 py-2 font-extrabold">{guestCount}</span>
+                    <button onClick={() => setGuestCount((p) => p + 1)} aria-label="More guests" className="px-3 py-2 hover:bg-slate-50 cursor-pointer"><Plus className="w-3.5 h-3.5" /></button>
+                  </div>
+                  <button onClick={() => setShowCustomerModal(true)} className="text-[10px] font-bold text-slate-500 hover:text-[#16A34A] flex items-center gap-0.5 cursor-pointer">
+                    <User className="w-3 h-3" /> {customerName || 'Guest'}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Items — scrolls internally, footer stays visible */}
+            <div className="flex-1 overflow-y-auto p-3 space-y-2 min-h-0">
+              {items.map((item) => (
+                <div key={item.itemId} className="border border-slate-100 rounded-xl p-2.5">
+                  <div className="flex justify-between items-start">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-extrabold text-slate-800 truncate">{item.name}</p>
+                      <p className="text-[10px] font-bold text-slate-500 font-mono">{currency}{item.price} each</p>
+                    </div>
+                    <button onClick={() => removeFromCart(item.itemId)} aria-label={`Remove ${item.name} from cart`} className="p-2 text-slate-300 hover:text-red-500 cursor-pointer">
+                      <Trash className="w-4 h-4" />
+                    </button>
+                  </div>
+                  {item.notes && <p className="text-[9px] text-red-600 font-semibold mt-1 bg-red-50 rounded px-1.5 py-0.5">📝 {item.notes}</p>}
+                  <div className="flex items-center justify-between mt-2 pt-1.5 border-t border-slate-50">
+                    <div className="flex items-center border rounded-lg bg-slate-50 text-xs">
+                      <button onClick={() => updateQty(item.itemId, -1)} aria-label="Decrease quantity" className="px-3 py-2 hover:bg-slate-100 cursor-pointer"><Minus className="w-3.5 h-3.5" /></button>
+                      <span className="px-3 py-2 font-extrabold">{item.quantity}</span>
+                      <button onClick={() => updateQty(item.itemId, 1)} aria-label="Increase quantity" className="px-3 py-2 hover:bg-slate-100 cursor-pointer"><Plus className="w-3.5 h-3.5" /></button>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button onClick={() => { setNoteForItem(item.itemId); setItemNotes(item.notes || ''); }} aria-label={`Add note to ${item.name}`} className="p-2 text-slate-400 hover:text-[#C85A32] cursor-pointer"><span className="text-xs">📝</span></button>
+                      <span className="font-mono font-bold text-sm text-slate-800">{currency}{(item.price * item.quantity).toFixed(0)}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {items.length === 0 && (
+                <div className="text-center py-12 text-slate-400 text-xs italic">
+                  <LayoutGrid className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                  Cart is empty. Pick a category and tap items to add them.
+                </div>
+              )}
+            </div>
+
+            {/* Summary + actions — always visible at the bottom of the sheet */}
+            <div className="shrink-0 border-t border-slate-200 p-3.5 bg-slate-50/50 space-y-2 pb-safe">
+              <div className="space-y-1 text-xs">
+                <div className="flex justify-between font-semibold text-slate-600"><span>Subtotal</span><span className="font-mono">{currency}{subtotal.toFixed(0)}</span></div>
+                {discount > 0 && <div className="flex justify-between font-semibold text-green-600"><span>Discount</span><span className="font-mono">-{currency}{discount.toFixed(0)}</span></div>}
+                <div className="flex justify-between font-bold text-slate-800 text-sm border-t border-slate-200 pt-1.5">
+                  <span>Total</span><span className="font-mono text-[#16A34A]">{currency}{total.toFixed(0)}</span>
+                </div>
+              </div>
+              <div className="flex gap-1.5">
+                <button onClick={onClear} className="flex-1 h-11 border border-slate-200 rounded-xl text-[11px] font-bold text-slate-500 hover:bg-slate-100 cursor-pointer transition-all">Clear</button>
+                {!counterSaleMode && (
+                  <button onClick={onPlaceOrder} disabled={items.length === 0 || submitting !== null}
+                    className="flex-[2] h-11 bg-[#16A34A] hover:bg-[#15803D] text-white font-bold rounded-xl text-[11px] uppercase tracking-wider shadow-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all">
+                    {submitting === 'place' ? 'Placing...' : (isBasicPos ? 'Place Order (KOT)' : 'Place Order')}
+                  </button>
+                )}
+              </div>
+              {payVisible && (
+                <button
+                  onClick={onPayment}
+                  disabled={(items.length === 0 && !activeOrderTakingId) || submitting !== null}
+                  className={`w-full h-11 font-bold rounded-xl text-[11px] uppercase tracking-wider shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                    counterSaleMode
+                      ? 'bg-[#16A34A] hover:bg-[#15803D] text-white'
+                      : 'bg-[#1a73e8] hover:bg-[#1557b0] text-white'
+                  }`}
+                >
+                  <CreditCard className="w-4 h-4" />
+                  {submitting === 'pay' ? 'Processing...' : (counterSaleMode ? 'PAYMENT' : 'Payment')}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
