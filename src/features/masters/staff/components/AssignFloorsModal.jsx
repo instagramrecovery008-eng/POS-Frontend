@@ -187,8 +187,10 @@ export default function AssignFloorsModal({ member, onClose, onSaved }) {
                       </button>
                     )}
                     <p className="text-[10px] text-slate-400 pt-2">
-                      Restricted staff (Cashier / Kitchen / Service Staff) see only their assigned floors.
-                      Managers and Admins remain restaurant-wide.
+                      {selected.size === 0
+                        ? 'No floor assigned yet — this staff member can see ALL active floors (Case A). Select one or more floors to restrict them.'
+                        : `Restricted to ${selected.size} floor${selected.size > 1 ? 's' : ''} (Case B) — clear the selection to restore access to all active floors.`}
+                      {' '}Managers and Admins always remain restaurant-wide.
                     </p>
                   </div>
                 )}

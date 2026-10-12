@@ -245,6 +245,10 @@ export default function SettingsPage() {
   const capabilities = settings.capabilities || getBusinessCapabilities(settings.businessType);
   const isFoodBusiness = capabilities.dietary === true;
   const isKitchenBusiness = capabilities.kitchen === true;
+  // Veg Only is the SAVED restaurant configuration. Once the real value has
+  // loaded, a Veg Only restaurant must never be offered the broader mode as a
+  // selectable option — the persisted value drives what is offered.
+  const vegOnlyLocked = !loading && settings.dietaryMode === 'VEG_ONLY';
   // §13: "Enable Basic POS Quick Billing" is a BASIC_POS food-business toggle
   // (café/bakery/bar/food-truck/cloud-kitchen) — never shown for QUICK_BILLING
   // retail businesses (those are quick billing by mode, with nothing to toggle).
@@ -308,7 +312,7 @@ export default function SettingsPage() {
         labels.push('Printer Configuration');
         break;
       case 'security':
-        labels.push('Authentication Type', 'Auto-Lock Timer', 'Session Security', 'Change Password');
+        labels.push('Authentication Type', 'Change Password');
         break;
       default:
         break;
@@ -556,22 +560,53 @@ export default function SettingsPage() {
                 Non-food verticals see no Veg/Non-Veg UI at all. */}
             {isFoodBusiness && (
             <SectionCard title="Food Settings" description="Controls the maximum food type available in this business. Individual staff may have a more restrictive setting." icon={Utensils}>
-              <div className="flex items-center justify-between gap-3 py-2">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 py-2">
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-bold text-slate-700">Dietary Menu Mode</p>
-                  <p className="text-[10px] text-slate-400 mt-0.5">Controls the maximum food type available in this restaurant. Individual staff may have a more restrictive setting.</p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    {vegOnlyLocked
+                      ? 'This restaurant is configured for Veg Only — every menu item and order is vegetarian. The mode is set in the restaurant configuration and cannot be broadened here.'
+                      : 'Controls the maximum food type available in this restaurant. Individual staff may have a more restrictive setting.'}
+                  </p>
                 </div>
-                <div className="flex gap-1.5 shrink-0">
-                  {[['VEG_ONLY', 'Veg Only'], ['VEG_AND_NON_VEG', 'Veg + Non-Veg']].map(([value, label]) => (
-                    <button key={value} type="button" onClick={() => handleFieldChange('dietaryMode', value)}
-                      className={`px-3 h-8 rounded-lg border text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-all ${
-                        (settings.dietaryMode || 'VEG_AND_NON_VEG') === value
-                          ? (value === 'VEG_ONLY' ? 'bg-emerald-50 border-emerald-400 text-emerald-700' : 'bg-red-50 border-red-400 text-red-700')
-                          : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'
+                <div className="flex flex-wrap gap-1.5 shrink-0">
+                  {/* The ACTIVE mode is the PERSISTED tenant value only. While
+                      settings are still loading the store still holds its
+                      default (Veg + Non-Veg), so nothing is marked active until
+                      the real value arrives — the default can never present
+                      itself as the saved configuration. */}
+                  {vegOnlyLocked ? (
+                    /* Veg Only is the SAVED configuration. The broader
+                       Veg + Non-Veg option is deliberately NOT rendered — it is
+                       never shown as the current or an allowed setting for a
+                       Veg Only restaurant (broadening it could expose non-veg
+                       items). The Super Admin changes the mode from the
+                       restaurant configuration. */
+                    <span
+                      className="px-3 h-8 rounded-lg border text-[10px] font-bold flex items-center gap-1.5 bg-emerald-50 border-emerald-400 text-emerald-700"
+                      aria-label="Active dietary menu mode: Veg Only (set in the restaurant configuration)"
+                    >
+                      <Leaf className="w-3 h-3" /> Veg Only
+                      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-emerald-600 text-white text-[8px] font-bold rounded-full uppercase tracking-wide">
+                        <Check className="w-2.5 h-2.5" /> Configured
+                      </span>
+                    </span>
+                  ) : (
+                    [['VEG_ONLY', 'Veg Only'], ['VEG_AND_NON_VEG', 'Veg + Non-Veg']].map(([value, label]) => (
+                    <button key={value} type="button"
+                      onClick={() => handleFieldChange('dietaryMode', value)}
+                      disabled={loading}
+                      aria-pressed={!loading && (settings.dietaryMode || 'VEG_AND_NON_VEG') === value}
+                      className={`px-3 h-8 rounded-lg border text-[10px] font-bold flex items-center gap-1 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                        loading ? 'cursor-wait'
+                          : !loading && (settings.dietaryMode || 'VEG_AND_NON_VEG') === value
+                            ? (value === 'VEG_ONLY' ? 'bg-emerald-50 border-emerald-400 text-emerald-700 cursor-pointer' : 'bg-red-50 border-red-400 text-red-700 cursor-pointer')
+                            : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100 cursor-pointer'
                       }`}>
                       {value === 'VEG_ONLY' ? <Leaf className="w-3 h-3" /> : <Beef className="w-3 h-3" />} {label}
                     </button>
-                  ))}
+                    ))
+                  )}
                 </div>
               </div>
             </SectionCard>
@@ -804,44 +839,12 @@ export default function SettingsPage() {
       case 'security':
         return (
           <div className="space-y-5">
-            <SectionCard title="Terminal Security" description="Configure lock screen, authentication, and auto-lock settings" icon={Lock}>
+            <SectionCard title="Terminal Security" description="Authentication for this terminal" icon={Lock}>
               <FormGrid cols={2}>
                 <FormField label="Authentication Type" value="password" disabled options={[
                   { value: 'password', label: 'Password (Email + Password)' },
                 ]} />
-                <FormField label="Auto-Lock Timer" value={settings?.security?.autoLock || 'disabled'} onChange={(v) => handleFieldChange('autoLock', v, 'security')} options={[
-                  { value: 'disabled', label: 'Disabled' },
-                  { value: '5', label: '5 Minutes' },
-                  { value: '10', label: '10 Minutes' },
-                  { value: '15', label: '15 Minutes' },
-                  { value: '30', label: '30 Minutes' },
-                ]} />
               </FormGrid>
-            </SectionCard>
-
-            <SectionCard title="Session Security" description="Current unlock session information" icon={KeyRound}>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between py-2 px-3 bg-slate-50 rounded-xl border border-slate-100">
-                  <span className="text-[10px] font-semibold text-slate-500">Lock Screen Status</span>
-                  <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                    {useAuthStore.getState().isUnlocked ? 'Unlocked' : 'Locked'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between py-2 px-3 bg-slate-50 rounded-xl border border-slate-100">
-                  <span className="text-[10px] font-semibold text-slate-500">Failed Unlock Attempts</span>
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                    useAuthStore.getState().failedUnlockAttempts > 0
-                      ? 'text-red-600 bg-red-50'
-                      : 'text-slate-400 bg-slate-100'
-                  }`}>
-                    {useAuthStore.getState().failedUnlockAttempts || 0}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between py-2 px-3 bg-slate-50 rounded-xl border border-slate-100">
-                  <span className="text-[10px] font-semibold text-slate-500">Max Failed Attempts</span>
-                  <span className="text-[10px] font-bold text-slate-600">5 (before 5 min lockout)</span>
-                </div>
-              </div>
             </SectionCard>
 
             <SectionCard title="Change Password" description="Securely update your own account password. You will be signed out after a successful change." icon={KeyRound}>

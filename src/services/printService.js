@@ -542,10 +542,14 @@ export function generateKotHtml({
   .info-line { display: flex; justify-content: space-between; font-size: 10px; margin-bottom: 1px; }
   .separator { border: none; border-top: 1px dashed #333; margin: 5px 0; }
   .separator-solid { border: none; border-top: 1px solid #333; margin: 5px 0; }
-  table { width: 100%; border-collapse: collapse; font-size: 10px; }
+  /* Fixed-width QTY column: the item name wraps BELOW the item column and can
+     never run under QTY. Quantity and item never overlap on a thermal printer. */
+  table { width: 100%; border-collapse: collapse; font-size: 10px; table-layout: fixed; }
   th { text-align: left; font-weight: bold; padding: 2px 0; border-bottom: 1px solid #333; }
-  th.qty, td.qty { text-align: center; width: 28px; }
+  th.qty, td.qty { text-align: left; width: 16%; white-space: nowrap; vertical-align: top; }
+  th.item, td.item { width: 84%; }
   td { padding: 1.5px 0; vertical-align: top; }
+  td.item { padding-left: 6px; word-break: break-word; overflow-wrap: anywhere; }
   tr.alt td { background-color: #f5f5f5; }
   .note { font-style: italic; color: #dc2626; font-size: 9px; }
   .dietary { font-weight: bold; font-size: 8px; }
@@ -578,7 +582,7 @@ export function generateKotHtml({
     <thead>
       <tr>
         <th class="qty">QTY</th>
-        <th>ITEM</th>
+        <th class="item">ITEM</th>
       </tr>
     </thead>
     <tbody>${itemRows}</tbody>

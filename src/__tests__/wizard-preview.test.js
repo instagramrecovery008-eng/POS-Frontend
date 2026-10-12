@@ -130,7 +130,7 @@ check(active.includes('grandTotal: Number(previewOrder?.totalAmount ?? previewOr
   'Grand Total from order.totalAmount (with fallbacks)');
 
 sub('21. Tenant isolation preserved');
-const orderController = readFileSync(path.join(SRC, '../../restaurant-pos-backend/src/controllers/order.controller.js'), 'utf8');
+const orderController = readFileSync(path.join(SRC, '../../backend/src/controllers/order.controller.js'), 'utf8');
 check(orderController.includes('req.tenant'), 'backend order controller runs inside tenant isolation (req.tenant)');
 check(!active.includes('restaurantId'), 'frontend never passes a restaurantId (tenant comes from the JWT)');
 
@@ -148,7 +148,7 @@ check(active.includes('min-h-[44px]') === false || true, 'no nested tiny control
 // ═══════════════════════════════════════════════
 section('BACKEND SUPPORT — order detail includes floor');
 
-const orderController2 = readFileSync(path.join(SRC, '../../restaurant-pos-backend/src/controllers/order.controller.js'), 'utf8');
+const orderController2 = readFileSync(path.join(SRC, '../../backend/src/controllers/order.controller.js'), 'utf8');
 check(orderController2.includes('floor:'), 'order detail include adds table.floor (floor name for the preview header)');
 
 // ═══════════════════════════════════════════════

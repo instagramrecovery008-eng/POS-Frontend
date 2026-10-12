@@ -8,6 +8,7 @@ import orderApi from '../../../../api/order.api';
 import { useSocketEvent } from '../../../../hooks/useSocket';
 import TableMergeModal from '../components/TableMergeModal';
 import { canHandleBilling } from '../../../../utils/permissions';
+import { isAcNonAcPricingEnabled } from '../../../../utils/businessCapabilities';
 
 // Module-level cache to prevent refetch on remount
 let cachedTables = null;
@@ -23,9 +24,15 @@ export default function TablesPage() {
   const { setScreen, setActiveOrderTakingId, setCheckoutOrderId, setShowTakeOrderWizard, addToast, refreshTrigger, incrementRefreshTrigger } = useUiStore();
   const { settings } = useSettingsStore();
   const currency = settings?.currencySymbol || '₹';
+  // AC / Non-AC table type is a RESTAURANT-mode feature only — the selector is
+  // never shown for Basic POS / Quick Billing / retail (backend enforces too).
+  const acNonAcPricing = isAcNonAcPricingEnabled(settings);
 
   const [tables, setTables] = useState(cachedTables || []);
   const [floors, setFloors] = useState([]);
+  // Distinguishes "no floors exist" from "the floor request failed". A failed
+  // request must never look like the unrestricted (Case A) empty state.
+  const [floorLoadError, setFloorLoadError] = useState(null);
   const [selectedFloorId, setSelectedFloorId] = useState('');
   const [loading, setLoading] = useState(!cachedTables);
   const [showDesigner, setShowDesigner] = useState(false);
@@ -57,6 +64,7 @@ export default function TablesPage() {
   const [floorDescription, setFloorDescription] = useState('');
   const [floorIsActive, setFloorIsActive] = useState(true);
   const [floorColor, setFloorColor] = useState('#16A34A');
+  const [floorType, setFloorType] = useState('NON_AC');
   const [editingFloorId, setEditingFloorId] = useState(null);
   const [floorSortOrder, setFloorSortOrder] = useState(0);
   const [floorSaving, setFloorSaving] = useState(false);
@@ -82,6 +90,7 @@ export default function TablesPage() {
   }, []);
 
   const loadFloors = async () => {
+    setFloorLoadError(null);
     try {
       const resp = await floorApi.getAll();
       if (resp.floors?.length) {
@@ -97,8 +106,11 @@ export default function TablesPage() {
         setFloors([]);
       }
     } catch (e) {
+      // Error state — surface it instead of silently rendering an empty
+      // (and therefore misleading) floor list.
       console.error('Failed to load floors:', e);
       setFloors([]);
+      setFloorLoadError(e?.message || 'Failed to load floors');
     }
   };
 
@@ -113,6 +125,8 @@ export default function TablesPage() {
           name: t.name || `Table ${String(t.tableNo).padStart(2, '0')}`,
           seats: t.capacity || 4,
           shape: t.shape || 'Rectangle',
+          // Inherited from the floor (floor wins); tableType is the fallback.
+          floorType: t.floorType || t.tableType || 'NON_AC',
           floorId: t.floorId != null ? t.floorId : '',
           status: t.status === 'OCCUPIED' ? 'Occupied' : t.status === 'AVAILABLE' ? 'Available' : t.status || 'Available',
           currentOrderId: null,
@@ -245,9 +259,11 @@ export default function TablesPage() {
           shape: tableShape,
           floorId: tableFloorId ? Number(tableFloorId) : null,
         });
+        // Type is inherited from the (possibly new) floor.
+        const updatedFloorType = floors.find(f => String(f.id) === String(tableFloorId))?.floorType || 'NON_AC';
         setTables(prev => prev.map(t =>
           t.id === editingTableId
-            ? { ...t, number: tableNum, name: tableName, seats: tableSeats, shape: tableShape, floorId: tableFloorId }
+            ? { ...t, number: tableNum, name: tableName, seats: tableSeats, shape: tableShape, floorType: updatedFloorType, floorId: tableFloorId }
             : t
         ));
         setEditingTableId(null);
@@ -269,6 +285,7 @@ export default function TablesPage() {
             name: tableName,
             seats: tableSeats,
             shape: tableShape,
+            floorType: floors.find(f => String(f.id) === String(tableFloorId))?.floorType || 'NON_AC',
             floorId: tableFloorId,
             status: 'Available',
             currentOrderId: null,
@@ -339,10 +356,16 @@ export default function TablesPage() {
           description: floorDescription || null,
           isActive: floorIsActive,
           sortOrder: floorSortOrder,
+          ...(acNonAcPricing ? { floorType } : {}),
         });
+        // Tables inherit the floor type — reflect it locally for the tables on
+        // this floor without waiting for a refetch.
         setFloors(prev => prev.map(f =>
-          f.id === editingFloorId ? { ...f, name: floorName, floorCode: floorCode || null, description: floorDescription || null, isActive: floorIsActive, sortOrder: floorSortOrder } : f
+          f.id === editingFloorId ? { ...f, name: floorName, floorCode: floorCode || null, description: floorDescription || null, isActive: floorIsActive, sortOrder: floorSortOrder, ...(acNonAcPricing ? { floorType } : {}) } : f
         ));
+        if (acNonAcPricing) {
+          setTables(prev => prev.map(t => String(t.floorId) === String(editingFloorId) ? { ...t, floorType } : t));
+        }
         addToast(`Floor "${floorName}" updated.`, 'success');
         setEditingFloorId(null);
       } else {
@@ -352,6 +375,7 @@ export default function TablesPage() {
           description: floorDescription || null,
           isActive: floorIsActive,
           sortOrder: floorSortOrder,
+          ...(acNonAcPricing ? { floorType } : {}),
         });
         if (resp.success && resp.floor) {
           setFloors(prev => [...prev, resp.floor]);
@@ -363,6 +387,7 @@ export default function TablesPage() {
       setFloorDescription('');
       setFloorIsActive(true);
       setFloorColor('#16A34A');
+      setFloorType('NON_AC');
       setFloorSortOrder(0);
       invalidateFloorsTablesCache();
     } catch (e) {
@@ -483,6 +508,11 @@ export default function TablesPage() {
               }`}>
               <span className={`w-2 h-2 rounded-full ${fl.isActive !== false ? 'bg-[#16A34A]' : 'bg-slate-300'}`} />
               {fl.name}
+              {acNonAcPricing && (
+                <span className={`text-[8px] font-bold px-1 rounded ${fl.floorType === 'AC' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-500'}`}>
+                  {fl.floorType === 'AC' ? 'AC' : 'Non-AC'}
+                </span>
+              )}
               {/* Assigned staff — light display only (Part 11) */}
               {Array.isArray(fl.assignedStaff) && fl.assignedStaff.length > 0 && (
                 <span className="text-[8px] font-extrabold text-slate-400 hidden md:inline">
@@ -558,7 +588,7 @@ export default function TablesPage() {
                             </p>
                           )}
                           <p className="text-[10px] text-slate-400 font-medium mt-1">
-                            {tbl.seats} Pax · {tbl.shape}
+                            {tbl.seats} Pax · {tbl.shape}{acNonAcPricing ? ` · ${tbl.floorType === 'AC' ? 'AC' : 'Non-AC'}` : ''}
                           </p>
                         </div>
                         <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded-md uppercase tracking-wider shrink-0 ${
@@ -736,6 +766,24 @@ export default function TablesPage() {
                     <textarea value={floorDescription} onChange={(e) => setFloorDescription(e.target.value)} placeholder="Optional description..."
                       className="w-full h-16 px-2 py-1.5 bg-white border rounded text-xs outline-none resize-none" />
                   </div>
+
+                  {/* Floor Type (RESTAURANT mode only) — the source of truth for
+                      AC/Non-AC pricing; every table on this floor inherits it. */}
+                  {acNonAcPricing && (
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-bold uppercase text-slate-400">Floor Type</label>
+                      <div className="flex gap-2 h-8">
+                        {['AC', 'NON_AC'].map((t) => (
+                          <button type="button" key={t} onClick={() => setFloorType(t)}
+                            className={`flex-1 rounded-lg border text-[10px] font-bold cursor-pointer ${
+                              floorType === t ? 'bg-emerald-50 border-emerald-400 text-emerald-700' : 'bg-white border-slate-200 text-slate-500'
+                            }`}>
+                            {t === 'AC' ? 'AC' : 'Non-AC'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   
                   {/* Display Order + Active Toggle */}
                   <div className="grid grid-cols-2 gap-2">
@@ -773,6 +821,11 @@ export default function TablesPage() {
                             {f.floorCode && (
                               <span className="text-[8px] text-slate-400 font-mono bg-slate-100 px-1 rounded shrink-0">{f.floorCode}</span>
                             )}
+                            {acNonAcPricing && (
+                              <span className={`text-[7px] font-bold px-1 rounded shrink-0 ${f.floorType === 'AC' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-500'}`}>
+                                {f.floorType === 'AC' ? 'AC' : 'Non-AC'}
+                              </span>
+                            )}
                             {f.isActive === false && (
                               <span className="text-[7px] text-amber-600 font-bold uppercase bg-amber-50 px-1 rounded shrink-0">Inactive</span>
                             )}
@@ -786,7 +839,7 @@ export default function TablesPage() {
                         </div>
                       </div>
                       <div className="flex gap-1 shrink-0">
-                        <button onClick={() => { setEditingFloorId(f.id); setFloorName(f.name); setFloorCode(f.floorCode || ''); setFloorDescription(f.description || ''); setFloorIsActive(f.isActive !== false); setFloorSortOrder(f.sortOrder || 0); }}
+                        <button onClick={() => { setEditingFloorId(f.id); setFloorName(f.name); setFloorCode(f.floorCode || ''); setFloorDescription(f.description || ''); setFloorIsActive(f.isActive !== false); setFloorType(f.floorType || 'NON_AC'); setFloorSortOrder(f.sortOrder || 0); }}
                           className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded cursor-pointer" title="Edit floor">
                           <Edit className="w-3.5 h-3.5" />
                         </button>
@@ -797,7 +850,13 @@ export default function TablesPage() {
                       </div>
                     </div>
                   ))}
-                  {floors.length === 0 && (
+                  {floorLoadError && (
+                    <div className="text-[10px] text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2 mb-2 flex items-center justify-between gap-2">
+                      <span className="truncate">{floorLoadError}</span>
+                      <button onClick={loadFloors} className="font-bold text-red-700 hover:text-red-800 cursor-pointer shrink-0">Retry</button>
+                    </div>
+                  )}
+                  {floors.length === 0 && !floorLoadError && (
                     <p className="text-[10px] text-slate-400 italic text-center py-4">No floors yet. Add one above.</p>
                   )}
                 </div>

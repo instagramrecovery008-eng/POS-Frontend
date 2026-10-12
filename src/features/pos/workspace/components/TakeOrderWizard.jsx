@@ -2,14 +2,14 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   X, ChevronRight, Check, ShoppingCart, Users,
   UtensilsCrossed, Search, Plus, Minus, Trash2,
-  CreditCard, Smartphone, AlertTriangle,
+  CreditCard, Smartphone, AlertTriangle, AlertCircle,
   Clock, Printer, FileText, Save, Play, Ban,
   ArrowRight, ArrowLeft, Building2, ChefHat,
   User, Coffee, DollarSign, Loader2,
   RotateCcw, UserPlus, LayoutGrid, Package
 } from 'lucide-react';
 import { useUiStore, useCartStore, useSettingsStore, useAuthStore } from '../../../../store';
-import { getBusinessCapabilities } from '../../../../utils/businessCapabilities';
+import { getBusinessCapabilities, resolveMenuItemUnitPrice, isAcNonAcPricingEnabled } from '../../../../utils/businessCapabilities';
 import { menuApi } from '../../../../api/menu.api';
 import { tableApi } from '../../../../api/table.api';
 import { orderApi } from '../../../../api/order.api';
@@ -22,7 +22,6 @@ import { PLACEHOLDER_IMAGE } from '../../../../lib/imagePlaceholder';
 import { canHandleBilling } from '../../../../utils/permissions';
 import {
   SUBCATEGORY_ALL,
-  SUBCATEGORY_NONE,
   subcategoryTabsFor,
   filterMenuItems,
 } from '../../../../utils/menuHierarchy';
@@ -149,9 +148,13 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
   const [floors, setFloors] = useState([]);
   const [floorLoading, setFloorLoading] = useState(false);
   const [selectedFloor, setSelectedFloor] = useState(null);
-  // True when the backend reports this user is floor-restricted (assigned
-  // floors only). Drives auto-selection and the "no floor assigned" state.
+  // True ONLY when floor assignments exist for this user (backend `restricted`).
+  // Drives auto-selection and the "no floor assigned" state. It must never be
+  // inferred from an empty list — "no assignments configured" means ALL active
+  // floors, and a FAILED assignment request is an error state, not a licence to
+  // show every floor.
   const [floorsRestricted, setFloorsRestricted] = useState(false);
+  const [floorLoadError, setFloorLoadError] = useState(null);
 
   // ── Step 3: Table ──
   const [tables, setTables] = useState([]);
@@ -380,6 +383,7 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
     setActionSuccess(null);
     setConfirmDialog(null);
     setFloors([]);
+    setFloorLoadError(null);
   };
 
   const loadMenu = async () => {
@@ -389,6 +393,8 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
         id: `menu-${m.id}`,
         name: m.name,
         price: Number(m.price),
+        acPrice: m.acPrice != null ? Number(m.acPrice) : null,
+        nonAcPrice: m.nonAcPrice != null ? Number(m.nonAcPrice) : null,
         category: m.category?.name || 'Main Course',
         subcategoryId: m.subcategoryId || null,
         subcategoryName: m.subcategory?.name || null,
@@ -446,6 +452,9 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
         number: parseInt(t.tableNo) || t.id,
         name: `Table ${String(t.tableNo).padStart(2, '0')}`,
         seats: t.capacity || 4,
+        // AC / Non-AC is inherited from the floor (source of truth).
+        floorType: t.floorType || t.tableType || 'NON_AC',
+        tableType: t.tableType || 'NON_AC',
         status: t.status === 'OCCUPIED' ? 'Occupied' :
                 t.status === 'RESERVED' ? 'Reserved' :
                 t.status === 'CLEANING' ? 'Cleaning' : 'Available',
@@ -461,10 +470,13 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
 
   const loadFloors = async () => {
     setFloorLoading(true);
+    setFloorLoadError(null);
     try {
-      // GET /users/me/floors — server-scoped: restricted staff receive only
-      // their assigned floors (restricted=true); ADMIN/MANAGER receive all.
-      // Backend still enforces per-request, this only shapes the UI.
+      // GET /users/me/floors — the server applies the assignment rule:
+      //   Case A (no assignment configured, or ADMIN/MANAGER) → all ACTIVE floors
+      //   Case B (one or more assignments)                     → those floors only
+      // `restricted` is true only for Case B. The backend still authorizes every
+      // floor operation, this only shapes the UI.
       const resp = await userApi.getMyFloors();
       const list = resp?.floors || resp?.data?.floors || [];
       const restricted = !!(resp?.restricted ?? resp?.data?.restricted);
@@ -475,9 +487,12 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
       }));
       setFloors(mapped);
     } catch (e) {
+      // ERROR state ≠ Case A. Never render an unrestricted floor list when the
+      // assignment state could not be loaded — show the failure instead.
       console.error('Failed to load floors:', e);
       setFloors([]);
       setFloorsRestricted(false);
+      setFloorLoadError(e?.message || 'Failed to load floors');
     } finally {
       setFloorLoading(false);
     }
@@ -511,7 +526,13 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
       addToCart({
         id: `menu-${item.id}`,
         name: item.name,
-        price: Number(item.price),
+        acPrice: item.acPrice != null ? Number(item.acPrice) : null,
+        nonAcPrice: item.nonAcPrice != null ? Number(item.nonAcPrice) : null,
+        price: resolveMenuItemUnitPrice(
+          { price: Number(item.price), acPrice: item.acPrice, nonAcPrice: item.nonAcPrice },
+          selectedTable,
+          settings
+        ),
       });
     } catch (e) {
       const status = e?.response?.status;
@@ -541,6 +562,13 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
     setNotesForItem(null);
     setNotesText('');
   }, []);
+
+  // ── AC / Non-AC price (RESTAURANT mode only) ──
+  // The displayed/cart price follows the SELECTED table's type. Before a table
+  // is chosen the base price is shown; the backend always re-resolves and
+  // validates the real price (a frontend price can never override it).
+  const effectiveUnitPrice = (item) => resolveMenuItemUnitPrice(item, selectedTable, settings);
+  const acNonAcPricing = isAcNonAcPricingEnabled(settings);
 
   // ── Computed Totals ──
   const subtotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
@@ -1048,6 +1076,17 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
       <p className="text-[10px] text-slate-400 mb-4">Choose the floor where the customer is seated</p>
       {floorLoading ? (
         <div className="flex items-center justify-center py-16 text-slate-400 text-xs"><Loader2 className="w-4 h-4 animate-spin mr-2" />Loading floors...</div>
+      ) : floorLoadError ? (
+        // The assignment state could NOT be loaded. Show the failure and offer a
+        // retry — never fall through to the unrestricted floor list.
+        <div className="flex flex-col items-center justify-center py-12 text-center">
+          <AlertCircle className="w-10 h-10 text-red-300 mb-3" />
+          <p className="text-sm font-bold text-slate-600 mb-1">Could not load floors</p>
+          <p className="text-[10px] text-slate-400 mb-4">{floorLoadError}</p>
+          <button onClick={loadFloors} className="h-8 px-3 bg-[#16A34A] hover:bg-[#15803D] text-white font-bold rounded-lg text-[10px] uppercase tracking-wider cursor-pointer">
+            Retry
+          </button>
+        </div>
       ) : floors.length === 0 && floorsRestricted ? (
         // Zero assigned floors for a restricted user — never fall back to all
         // floors; say so clearly (backend also blocks unauthorized floors).
@@ -1140,6 +1179,11 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
                 }`}>
                 <span className="font-mono font-extrabold text-sm text-slate-800">{table.name.replace('Table ', 'T')}</span>
                 <span className="text-[9px] text-slate-500 font-bold flex items-center gap-0.5"><Users className="w-3 h-3" />{table.seats}</span>
+                {acNonAcPricing && (
+                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${table.floorType === 'AC' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-500'}`}>
+                    {table.floorType === 'AC' ? 'AC' : 'Non-AC'}
+                  </span>
+                )}
                 <span className={`text-[7px] font-extrabold uppercase px-1.5 py-0.5 rounded-full ${
                   table.status === 'Available' ? 'bg-emerald-100 text-emerald-800' :
                   table.status === 'Occupied' ? 'bg-red-100 text-red-800' : 'bg-slate-200 text-slate-600'
@@ -1256,7 +1300,7 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
             const outOfStock = item.stockStatus === 'Out of Stock';
             return (
               <div key={item.id}
-                onClick={() => !outOfStock && addToCart(item)}
+                onClick={() => !outOfStock && addToCart({ ...item, price: effectiveUnitPrice(item) })}
                 className={`bg-white border rounded-2xl overflow-hidden transition-all active:scale-[0.97] ${
                   inCart ? 'border-[#16A34A] shadow-sm ring-1 ring-[#16A34A]/20' :
                   outOfStock ? 'opacity-50 border-slate-200 cursor-not-allowed grayscale' :
@@ -1281,7 +1325,7 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
                   )}
                   {/* Price badge */}
                   <span className="absolute bottom-1.5 right-1.5 bg-slate-900/80 text-white font-mono text-[10px] font-bold px-1.5 py-0.5 rounded">
-                    {currency}{item.price}
+                    {currency}{effectiveUnitPrice(item)}
                   </span>
 
                   {/* In-cart quantity badge */}
@@ -1295,7 +1339,7 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
                 <div className="p-2.5">
                   <p className="text-[12px] font-extrabold text-slate-800 truncate leading-tight mb-1">{item.name}</p>
                   <div className="flex items-center justify-between">
-                    <span className="text-[13px] font-bold text-[#16A34A] font-mono">{currency}{item.price}</span>
+                    <span className="text-[13px] font-bold text-[#16A34A] font-mono">{currency}{effectiveUnitPrice(item)}</span>
                     {outOfStock ? (
                       <span className="text-[9px] font-bold text-red-500">Sold Out</span>
                     ) : item.stockStatus === 'Available' ? (
@@ -1358,7 +1402,7 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         <h3 className="text-sm font-extrabold text-slate-800">Review Order</h3>
         <p className="text-[10px] text-slate-400">
-          {isTakeaway ? 'Take Away' : `Table: ${selectedTable?.name || '-'} · ${guestCount} guest(s)`} · {cart.reduce((s, c) => s + c.qty, 0)} items
+          {isTakeaway ? 'Take Away' : `Table: ${selectedTable?.name || '-'}${acNonAcPricing && selectedTable ? ` (${selectedTable.floorType === 'AC' ? 'AC' : 'Non-AC'})` : ''} · ${guestCount} guest(s)`} · {cart.reduce((s, c) => s + c.qty, 0)} items
           {!isTakeaway && waiterName ? ` · Service Staff: ${waiterName}` : ''}
         </p>
 

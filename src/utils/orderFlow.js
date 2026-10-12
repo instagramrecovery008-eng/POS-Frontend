@@ -70,14 +70,22 @@ export function resolveAvailableOrderTypes({ role, assignedOrderTypes, grantLoad
  * Resolve the floors the user may see/select in the wizard.
  *
  * @param {Array}  floors            floors returned by GET /users/me/floors
- *                                   (already server-scoped: restricted staff get only theirs)
- * @param {boolean} floorsRestricted true when the backend reported restricted=true
+ *                                   (already server-scoped: assigned staff get
+ *                                   only theirs, everyone else gets all ACTIVE
+ *                                   floors)
+ * @param {boolean} floorsRestricted true ONLY when floor assignments actually
+ *                                   exist (backend `restricted`). "Not
+ *                                   configured" is reported as false — an empty
+ *                                   assignment list means ALL active floors, not
+ *                                   "no floors allowed".
  * @returns {{ floors: Array, autoSelectedFloor: Object|null, hasAccess: boolean }}
  *   floors            — floors to render (already narrowed server-side)
  *   autoSelectedFloor — the single permitted floor when exactly one exists
  *                       (Part 7 req. 1: auto-select it; null otherwise)
- *   hasAccess         — false only when a RESTRICTED user has zero floors
- *                       (Part 7 req. 3: configuration message, never other floors)
+ *   hasAccess         — false only when assignments EXIST but resolve to zero
+ *                       reachable floors (Part 7 req. 3: configuration message,
+ *                       never other floors). An unconfigured user never lands
+ *                       here — they receive every active floor.
  */
 export function resolveAccessibleFloors(floors, floorsRestricted) {
   const list = Array.isArray(floors) ? floors : [];

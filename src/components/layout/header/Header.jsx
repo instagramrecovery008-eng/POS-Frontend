@@ -1,14 +1,13 @@
 import React from 'react';
-import { Shield, AlertTriangle, Crown, Menu } from 'lucide-react';
+import { AlertTriangle, Crown, Menu } from 'lucide-react';
 import { useAuthStore, useUiStore, useSettingsStore } from '../../../store';
-import { getRoleDisplayName } from '../../../utils/permissions';
+import UserProfileDropdown from './UserProfileDropdown';
 
 export default function Header() {
   const { user, subscription } = useAuthStore();
   const { settings } = useSettingsStore(); 
-  const { setScreen, currentScreen, setMobileNavOpen } = useUiStore();
+  const { setScreen, setMobileNavOpen } = useUiStore();
   const isSuperAdmin = user?.role === 'SUPER_ADMIN';
-  const isSuperAdminScreen = currentScreen?.startsWith('sa_');
 
   // ── Subscription reminder: always visible, highlighted when expiring ──
   // The lifecycle/days always come from the backend snapshot (authoritative).
@@ -25,25 +24,6 @@ export default function Header() {
 
   const openSubscription = () => {
     if (!isSuperAdmin) setScreen('subscription');
-  };
-
-  // Get user display name
-  const getDisplayName = () => {
-    if (user?.name) return user.name;
-    if (user?.firstName) return `${user.firstName} ${user.lastName || ''}`.trim();
-    return 'User';
-  };
-
-  // Get initials
-  const getInitials = () => {
-    if (user?.initials) return user.initials;
-    if (user?.name) {
-      return user.name.split(' ').map(p => p[0]).join('').toUpperCase().slice(0, 2) || 'SA';
-    }
-    if (user?.firstName) {
-      return (user.firstName[0] + (user.lastName?.[0] || '')).toUpperCase() || 'SA';
-    }
-    return 'SA';
   };
 
   return (
@@ -89,19 +69,9 @@ export default function Header() {
       </div>
 
       <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
-        <div className="flex items-center gap-2 border-l pl-2 sm:pl-3 border-slate-200 min-w-0">
-          <div className={`w-8 h-8 ${isSuperAdmin ? 'bg-[#0F172A] text-[#16A34A] border-[#16A34A]/30' : 'bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/20'} rounded-full flex items-center justify-center font-bold text-xs shadow-xs border shrink-0`}>
-            {isSuperAdmin ? <Shield className="w-4 h-4" /> : (getInitials())}
-          </div>
-          <div className="hidden md:block leading-none min-w-0">
-            <p className="text-xs font-bold text-[#111827] leading-none truncate">
-              {getDisplayName()}
-            </p>
-            <p className={`text-[10px] font-bold mt-0.5 uppercase tracking-wide ${isSuperAdmin ? 'text-slate-500' : 'text-[#16A34A]'}`}>
-              {isSuperAdmin ? 'Super Admin' : getRoleDisplayName(user?.role)}
-            </p>
-          </div>
-        </div>
+        {/* Shared profile dropdown — real user info + working logout for every
+            authenticated role (Super Admin and all restaurant roles). */}
+        <UserProfileDropdown />
       </div>
     </header>
   );

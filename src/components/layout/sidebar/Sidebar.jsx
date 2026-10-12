@@ -13,7 +13,6 @@ import {
   ChevronLeft,
   ChevronRight,
   LogOut,
-  Lock,
   X,
 } from 'lucide-react';
 import AppLogo from '../../common/AppLogo';
@@ -64,7 +63,7 @@ function getOrderNavItem(businessMode, enablePosOrdering, settings) {
 
 export default function Sidebar() {
   const { sidebarCollapsed, toggleSidebar, currentScreen, setScreen, mobileNavOpen, setMobileNavOpen } = useUiStore();
-  const { user, subscription, logout, lockTerminal, staffPermissions } = useAuthStore();
+  const { user, subscription, logout, staffPermissions } = useAuthStore();
   const { settings } = useSettingsStore();
   const { setOrders } = useCartStore();
 
@@ -187,14 +186,6 @@ export default function Sidebar() {
 
   const renderBottomActions = () => (
     <>
-      <button
-        onClick={() => { setMobileNavOpen(false); lockTerminal(currentScreen); }}
-        title="Lock Screen"
-        className="w-full flex items-center gap-2.5 px-3 py-3 min-h-11 text-xs font-bold text-slate-400 hover:bg-slate-800 hover:text-white rounded-lg transition-colors cursor-pointer"
-      >
-        <Lock className="w-4.5 h-4.5 shrink-0" />
-        <span className={cn('truncate', !mobileNavOpen && (sidebarCollapsed ? 'hidden' : 'hidden xl:block'))}>Lock Screen</span>
-      </button>
       <button
         onClick={handleLogout}
         title="Log Out"
@@ -329,14 +320,6 @@ export default function Sidebar() {
 
       {/* Bottom actions */}
       <div className="px-2 space-y-1">
-        <button
-          onClick={() => lockTerminal(currentScreen)}
-          title="Lock Screen"
-          className="w-full flex items-center gap-2.5 px-3 py-3 min-h-11 text-xs font-bold text-slate-400 hover:bg-slate-800 hover:text-white rounded-lg transition-colors cursor-pointer"
-        >
-          <Lock className="w-4.5 h-4.5 shrink-0" />
-          {!sidebarCollapsed && <span className="hidden xl:block">Lock Screen</span>}
-        </button>
         <button
           onClick={handleLogout}
           title="Log Out"

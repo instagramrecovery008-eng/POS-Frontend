@@ -213,9 +213,37 @@ export function getVisibleStaffRoles(businessType) {
 }
 
 /**
- * Which internal UserRole values may RECEIVE a staff discount — visibility
- * and receivability share ONE list (see getVisibleStaffRoles).
+ * AC / Non-AC dine-in pricing applies ONLY in RESTAURANT mode.
+ *
+ * Mirrors the backend resolver (utils/pricing.js) — the frontend never decides
+ * the price for billing, it only DISPLAYS the active price. `businessMode` is
+ * already normalized server-side ('restaurant' | 'counter'); the raw plan mode
+ * (subscriptionBusinessMode) is accepted too when present.
  */
-export function staffDiscountRoles(businessType) {
-  return getVisibleStaffRoles(businessType);
+export function isAcNonAcPricingEnabled(settings) {
+  const s = settings || {};
+  const raw = String(s.subscriptionBusinessMode || '').trim().toUpperCase();
+  if (raw === 'RESTAURANT') return true;
+  if (raw === 'BASIC_POS' || raw === 'QUICK_BILLING') return false;
+  return String(s.businessMode || '').trim().toLowerCase() === 'restaurant';
+}
+
+/**
+ * Resolve the price that should be DISPLAYED/added for a menu item given the
+ * selected table. Returns the base price outside RESTAURANT mode or when no
+ * table is selected. The backend re-resolves and validates the real price —
+ * this is display/cart convenience only.
+ */
+export function resolveMenuItemUnitPrice(item, table, settings) {
+  const base = Number(item && item.price);
+  const fallback = Number.isFinite(base) ? base : 0;
+  if (!isAcNonAcPricingEnabled(settings) || !item || !table) return fallback;
+  // Floor is the source of truth; fall back to the table's inherited type.
+  const t = String(
+    (table.floor && table.floor.floorType) || table.floorType || table.tableType || table.type || ''
+  ).trim().toUpperCase();
+  const candidate = t === 'AC' ? item.acPrice : t === 'NON_AC' ? item.nonAcPrice : null;
+  if (candidate == null || candidate === '') return fallback;
+  const resolved = Number(candidate);
+  return Number.isFinite(resolved) ? resolved : fallback;
 }

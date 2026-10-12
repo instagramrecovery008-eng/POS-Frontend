@@ -9,6 +9,7 @@ const MODE_META = {
   renew: { title: 'Renew Subscription', icon: RotateCcw, color: 'text-blue-600', bg: 'bg-blue-50' },
   activate: { title: 'Activate Subscription', icon: PlayCircle, color: 'text-green-600', bg: 'bg-green-50' },
   cancel: { title: 'Cancel Subscription', icon: XCircle, color: 'text-red-600', bg: 'bg-red-50' },
+  suspend: { title: 'Suspend Subscription', icon: Ban, color: 'text-amber-600', bg: 'bg-amber-50' },
 };
 
 /** Preview expiry date for a billing cycle anchored at a start date */
@@ -93,6 +94,8 @@ export default function PlanChangeDialog({ restaurant, subscription, plans, mode
         await superAdminApi.activateSubscription(restaurant.id, notes);
       } else if (mode === 'cancel') {
         await superAdminApi.cancelSubscription(restaurant.id, notes);
+      } else if (mode === 'suspend') {
+        await superAdminApi.suspendSubscription(restaurant.id, notes);
       }
       onDone();
     } catch (e) {
@@ -189,9 +192,16 @@ export default function PlanChangeDialog({ restaurant, subscription, plans, mode
             </div>
           )}
 
+          {mode === 'suspend' && (
+            <div className="p-3 bg-amber-50/60 border border-amber-100 rounded-xl text-[11px] text-amber-700 font-semibold flex items-start gap-2">
+              <Ban className="w-4 h-4 shrink-0 mt-0.5" />
+              Suspending pauses access for all users of this restaurant until the subscription is reactivated. No data is deleted.
+            </div>
+          )}
+
           <div>
             <label className={labelCls}>Notes (optional)</label>
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder={mode === 'cancel' ? 'Reason for cancellation…' : 'Any notes for the audit log…'} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold outline-none focus:border-[#16A34A] resize-none" />
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder={mode === 'cancel' ? 'Reason for cancellation…' : mode === 'suspend' ? 'Reason for suspension…' : 'Any notes for the audit log…'} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold outline-none focus:border-[#16A34A] resize-none" />
           </div>
         </div>
 
@@ -201,11 +211,11 @@ export default function PlanChangeDialog({ restaurant, subscription, plans, mode
             onClick={handleSubmit}
             disabled={saving}
             className={`h-9 px-5 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer disabled:opacity-50 ${
-              mode === 'cancel' ? 'bg-red-500 hover:bg-red-600' : mode === 'downgrade' ? 'bg-amber-500 hover:bg-amber-600' : 'bg-[#16A34A] hover:bg-[#15803D]'
+              mode === 'cancel' ? 'bg-red-500 hover:bg-red-600' : (mode === 'downgrade' || mode === 'suspend') ? 'bg-amber-500 hover:bg-amber-600' : 'bg-[#16A34A] hover:bg-[#15803D]'
             }`}
           >
             {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CreditCard className="w-3.5 h-3.5" />}
-            {mode === 'upgrade' ? 'Upgrade Plan' : mode === 'downgrade' ? 'Downgrade Plan' : mode === 'renew' ? 'Renew Subscription' : mode === 'activate' ? 'Activate' : 'Cancel Subscription'}
+            {mode === 'upgrade' ? 'Upgrade Plan' : mode === 'downgrade' ? 'Downgrade Plan' : mode === 'renew' ? 'Renew Subscription' : mode === 'activate' ? 'Activate' : mode === 'suspend' ? 'Suspend Subscription' : 'Cancel Subscription'}
           </button>
         </div>
       </div>

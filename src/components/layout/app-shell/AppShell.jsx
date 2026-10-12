@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback, lazy, Suspense } from 'react';
+import React, { useEffect, useRef, lazy, Suspense } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import Sidebar from '../sidebar/Sidebar';
@@ -6,7 +6,6 @@ import Header from '../header/Header';
 import { useAuthStore, useUiStore, useSettingsStore, useCartStore } from '../../../store';
 import LoginPage from '../../../features/auth/pages/LoginPage';
 import ForceChangePasswordPage from '../../../features/auth/pages/ForceChangePasswordPage';
-import LockScreen from './LockScreen';
 import { useSocketConnection, useSocketEvent } from '../../../hooks/useSocket';
 import { invalidateMenuData } from '../../../services/menuSync';
 import DashboardPage from '../../../features/dashboard/pages/DashboardPage';
@@ -196,75 +195,6 @@ function findBestAvailableScreen(settings, userRole, subscription) {
   return 'dashboard'; // ultimate fallback
 }
 
-// ── Auto-lock timer hook ──────────────────────────────────────────────────
-function useAutoLock() {
-  const { settings } = useSettingsStore();
-  const { isUnlocked, isAuthenticated, lockTerminal } = useAuthStore();
-  const { currentScreen } = useUiStore();
-  const idleTimerRef = useRef(null);
-  const lastActivityRef = useRef(Date.now());
-
-  const resetIdleTimer = useCallback(() => {
-    lastActivityRef.current = Date.now();
-  }, []);
-
-  useEffect(() => {
-    // Don't auto-lock if not unlocked or not authenticated
-    if (!isUnlocked || !isAuthenticated) return;
-
-    // Don't auto-lock on login screen
-    if (currentScreen === 'login') return;
-
-    const autoLockSetting = settings?.security?.autoLock || 'disabled';
-    if (autoLockSetting === 'disabled') return;
-
-    const timeoutMinutes = parseInt(autoLockSetting, 10);
-    if (isNaN(timeoutMinutes) || timeoutMinutes <= 0) return;
-
-    const timeoutMs = timeoutMinutes * 60 * 1000;
-
-    // Clear existing timer
-    if (idleTimerRef.current) {
-      clearInterval(idleTimerRef.current);
-    }
-
-    // Check every 30 seconds if idle timeout has been exceeded
-    idleTimerRef.current = setInterval(() => {
-      const elapsed = Date.now() - lastActivityRef.current;
-      if (elapsed >= timeoutMs) {
-        lockTerminal(currentScreen);
-      }
-    }, 30000);
-
-    return () => {
-      if (idleTimerRef.current) {
-        clearInterval(idleTimerRef.current);
-      }
-    };
-  }, [isUnlocked, isAuthenticated, currentScreen, settings?.security?.autoLock, lockTerminal]);
-
-  // Reset idle timer on user activity
-  useEffect(() => {
-    if (!isUnlocked) return;
-
-    const activityEvents = ['mousedown', 'mousemove', 'keydown', 'touchstart', 'scroll', 'click'];
-    
-    const handleActivity = () => {
-      resetIdleTimer();
-    };
-
-    activityEvents.forEach(event => {
-      window.addEventListener(event, handleActivity, { passive: true });
-    });
-
-    return () => {
-      activityEvents.forEach(event => {
-        window.removeEventListener(event, handleActivity);
-      });
-    };
-  }, [isUnlocked, resetIdleTimer]);
-}
-
 // ─── Unauthorized Screen ────────────────────────────────────────────────────
 function UnauthorizedPage() {
   const { user, logout } = useAuthStore();
@@ -324,9 +254,6 @@ export default function AppShell() {
   useSocketEvent({ event: 'order:cancelled', handler: invalidateOnOrderChange });
   useSocketEvent({ event: 'order:deleted', handler: invalidateOnOrderChange });
   useSocketEvent({ event: 'order:payment', handler: invalidateOnOrderChange });
-
-  // ── Auto-lock idle timer ──
-  useAutoLock();
 
   const { currentScreen, setScreen } = useUiStore();
   const { user, subscription, onboarding, isUnlocked, isAuthenticated, sessionReady, restoreSession } = useAuthStore();
@@ -532,10 +459,10 @@ export default function AppShell() {
     return <ForceChangePasswordPage />;
   }
 
-  // Show lock screen if terminal is locked but user is authenticated (token exists)
-  if (!isUnlocked && isAuthenticated) {
-    return <LockScreen />;
-  }
+  // The Lock Screen feature has been removed — an authenticated user is never
+  // redirected to a terminal lock screen. If the unlocked flag is ever false
+  // while a session exists, the normal login screen is the only entry point
+  // (refreshing the session restores access; auth/route guards are unchanged).
 
   // Show login if not unlocked and not authenticated. "Create New Account"
   // renders the public registration screen instead (also pre-auth).

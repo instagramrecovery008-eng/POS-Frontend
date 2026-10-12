@@ -660,9 +660,28 @@ check(rbacSrc.includes("KITCHEN: 'KITCHEN'"), 'ROLES.KITCHEN = KITCHEN (internal
 check(rbacSrc.includes("WAITER: 'order_taking'"), 'WAITER default screen mapping intact');
 
 sub('Screens use the centralized utility (no scattered label maps)');
-const lockScreenSrc2 = read('components/layout/app-shell/LockScreen.jsx');
-check(lockScreenSrc2.includes('getRoleDisplayName'), 'LockScreen uses getRoleDisplayName');
-check(!lockScreenSrc2.includes("'Service Staff'"), 'LockScreen has no local duplicate label map');
+// ═══════════════════════════════════════════════
+//  LOCK SCREEN REMOVED — auth + routing must be unaffected
+// ═══════════════════════════════════════════════
+sub('Lock Screen feature removed (auth/routing untouched)');
+const appShellNoLock = read('components/layout/app-shell/AppShell.jsx');
+const sidebarNoLock = read('components/layout/sidebar/Sidebar.jsx');
+check(!appShellNoLock.includes('LockScreen'), 'AppShell no longer imports/renders a LockScreen');
+check(!appShellNoLock.includes('useAutoLock'), 'AppShell no longer auto-redirects to a lock screen');
+check(!sidebarNoLock.includes('lockTerminal') && !sidebarNoLock.includes('Lock Screen'), 'Sidebar exposes no Lock Screen entry');
+check(!read('features/settings/pages/SettingsPage.jsx').includes('Auto-Lock Timer'), 'POS Settings no longer exposes the Auto-Lock Timer');
+try {
+  read('components/layout/app-shell/LockScreen.jsx');
+  check(false, 'LockScreen component is removed from the bundle');
+} catch (_) {
+  check(true, 'LockScreen component is removed from the bundle');
+}
+// Authentication / route protection must still be intact.
+check(appShellNoLock.includes('if (!isUnlocked)') && appShellNoLock.includes('return <LoginPage />'), 'logged-out users still land on the login screen');
+check(appShellNoLock.includes('canAccessScreen(userRole, currentScreen)'), 'route guards remain enforced');
+check(appShellNoLock.includes('mustChangePassword'), 'forced password change gate remains');
+const authNoLock = read('store/authStore.js');
+check(authNoLock.includes('logout:') && authNoLock.includes('localStorage.removeItem(STORAGE_KEY_TOKEN)'), 'logout still clears the session');
 const staffPageSrc2 = read('features/masters/staff/pages/StaffPage.jsx');
 check(staffPageSrc2.includes('mapRoleFromBackend = (role) => getRoleDisplayName(role)'), 'StaffPage display labels via utility');
 const discountFormSrc2 = read('features/discounts/components/DiscountFormModal.jsx');

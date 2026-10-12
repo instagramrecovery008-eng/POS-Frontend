@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Search, RefreshCw, Edit, Trash, X, Leaf, Beef, Barcode, Package, AlertTriangle, Check, Info, AlertCircle, Eye, EyeOff, Image as ImageIcon, Upload, Camera } from 'lucide-react';
 import { useSettingsStore, useUiStore } from '../../../../store';
-import { getBusinessCapabilities, catalogNaming } from '../../../../utils/businessCapabilities';
+import { getBusinessCapabilities, catalogNaming, isAcNonAcPricingEnabled } from '../../../../utils/businessCapabilities';
 import { menuApi } from '../../../../api/menu.api';
 import { categoryApi } from '../../../../api/category.api';
 import { useSocketEvent } from '../../../../hooks/useSocket';
@@ -11,8 +11,13 @@ import ConfirmationDialog from '../../../../components/ConfirmationDialog';
 import {
   SUBCATEGORY_ALL,
   subcategoryTabsFor,
+  subcategoriesForCategoryId,
+  categoryTokenToId,
   filterMenuItems,
+  dietaryFilterOptions,
+  clampDietaryFilter,
 } from '../../../../utils/menuHierarchy';
+import { resolveItemDefaults } from '../../../../utils/menuItemDefaults';
 
 // ── Numeric input sanitizer ──
 // One reusable rule for every numeric field (Price, Prep Time, Stock Quantity,
@@ -87,6 +92,12 @@ export default function MenuPage() {
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [selectedSubcategory, setSelectedSubcategory] = useState('All');
   const [filterDietary, setFilterDietary] = useState('All');
+  // Keep the food-type filter inside what the persisted restaurant mode allows:
+  // a Veg Only restaurant is pinned to 'VEG' (never 'All' / 'NON_VEG'), and the
+  // pin re-applies when the mode arrives from the API after mount.
+  useEffect(() => {
+    setFilterDietary((prev) => clampDietaryFilter(prev, settings.dietaryMode));
+  }, [settings.dietaryMode]);
   const [subcategories, setSubcategories] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -122,10 +133,18 @@ export default function MenuPage() {
   const [subCatForm, setSubCatForm] = useState({ name: '', description: '', sortOrder: 0 });
   const [editingSubCat, setEditingSubCat] = useState(null);
   const [subCatSaving, setSubCatSaving] = useState(false);
+  // Delete confirmation (Part 15): deleting a subcategory is never silent —
+  // the dialog states how many menu items use it and where they will go.
+  const [subCatDeleteTarget, setSubCatDeleteTarget] = useState(null);
+  const [subCatDeleting, setSubCatDeleting] = useState(false);
 
   // Form state
   const [itemName, setItemName] = useState('');
   const [itemPrice, setItemPrice] = useState(150);
+  // AC / Non-AC prices (RESTAURANT mode only). Held as strings so an empty
+  // field stays empty — the backend mirrors the base price when omitted.
+  const [itemAcPrice, setItemAcPrice] = useState('');
+  const [itemNonAcPrice, setItemNonAcPrice] = useState('');
   const [itemCategory, setItemCategory] = useState('');
   const [itemDesc, setItemDesc] = useState('');
   const [itemImage, setItemImage] = useState('');
@@ -134,9 +153,14 @@ export default function MenuPage() {
   const [itemLive, setItemLive] = useState(true);
   const [itemVeg, setItemVeg] = useState(true);
   const [itemSubcategoryId, setItemSubcategoryId] = useState('');
-  // Restaurant dietary mode (Part 16): VEG_ONLY restaurants can only create
-  // VEG items — the Non-Veg option is hidden entirely (backend enforces too).
+  // Restaurant dietary mode — the PERSISTED tenant RestaurantSetting value
+  // (loaded by settingsStore.fetchSettings). VEG_ONLY restaurants can only
+  // create VEG items; the Non-Veg option is hidden entirely (the backend also
+  // enforces it on create/update).
   const restaurantVegOnly = (settings.dietaryMode || 'VEG_AND_NON_VEG') === 'VEG_ONLY';
+  // Food-type filter options derive from the SAME persisted value — a Veg Only
+  // restaurant is never offered "Veg + Non-Veg" or "Non-Veg Only".
+  const dietaryFilterChoices = dietaryFilterOptions(settings.dietaryMode);
   // Centralized capability check (§9/§10): the dietary filter and veg/non-veg
   // indicators only exist for food verticals. Non-food businesses (retail)
   // get a clean product UI — the DB fields stay but are never surfaced.
@@ -149,6 +173,9 @@ export default function MenuPage() {
   const showBarcodeField = menuCapabilities.barcode === true;
   const naming = catalogNaming(settings.businessType);
   const isStockBusiness = menuCapabilities.stock === true;
+  // AC / Non-AC pricing is a RESTAURANT-mode feature only — Basic POS, Quick
+  // Billing and retail keep the single existing price field.
+  const acNonAcPricing = isAcNonAcPricingEnabled(settings);
   const [itemSku, setItemSku] = useState('');
   const [itemBarcode, setItemBarcode] = useState('');
   const [itemPrepTime, setItemPrepTime] = useState(10);
@@ -216,6 +243,8 @@ export default function MenuPage() {
         isLive: m.isAvailable !== false,
         stockStatus: m.isAvailable === false ? 'Out of Stock' : (m.currentStock !== undefined && m.currentStock < 10 && m.currentStock >= 0) ? 'Low Stock' : 'Available',
         isVeg: m.isVeg !== false,
+        acPrice: m.acPrice != null ? Number(m.acPrice) : null,
+        nonAcPrice: m.nonAcPrice != null ? Number(m.nonAcPrice) : null,
         dietaryType: m.dietaryType || (m.isVeg !== false ? 'VEG' : 'NON_VEG'),
         subcategoryId: m.subcategoryId || null,
         subcategoryName: m.subcategory?.name || null,
@@ -263,21 +292,43 @@ export default function MenuPage() {
   };
 
   // ── Subcategory CRUD Handlers (Part 15) ────────────────
+  const cancelSubCatEdit = () => {
+    setEditingSubCat(null);
+    setSubCatForm({ name: '', description: '', sortOrder: 0 });
+  };
+
   const handleSubCatSubmit = async () => {
-    if (!subCatForm.name.trim() || !subCatCategory) return;
+    if (!subCatCategory) return;
+    const name = subCatForm.name.trim();
+    // Same rule the backend enforces: non-empty and unique inside the category.
+    if (!name) {
+      addToast('Subcategory name is required', 'error');
+      return;
+    }
+    const clash = subcategories.find((s) =>
+      Number(s.categoryId) === categoryTokenToId(subCatCategory)
+      && s.name === name
+      && (!editingSubCat || s.id !== editingSubCat.id)
+    );
+    if (clash) {
+      addToast(`"${name}" already exists in this category`, 'error');
+      return;
+    }
     setSubCatSaving(true);
     try {
-      const categoryId = parseInt(String(subCatCategory).replace('cat-', ''));
+      const categoryId = categoryTokenToId(subCatCategory);
       if (editingSubCat) {
-        await menuApi.updateSubcategory(editingSubCat.id, { name: subCatForm.name.trim(), sortOrder: subCatForm.sortOrder });
+        await menuApi.updateSubcategory(editingSubCat.id, { name, sortOrder: subCatForm.sortOrder });
         addToast('Subcategory updated', 'success');
       } else {
-        await menuApi.createSubcategory({ categoryId, name: subCatForm.name.trim(), sortOrder: subCatForm.sortOrder || 0 });
+        await menuApi.createSubcategory({ categoryId, name, sortOrder: subCatForm.sortOrder || 0 });
         addToast('Subcategory added', 'success');
       }
-      setEditingSubCat(null);
-      setSubCatForm({ name: '', description: '', sortOrder: 0 });
+      cancelSubCatEdit();
       loadSubcategories();
+      // Menu rows and tabs carry the subcategory name, so refresh them too.
+      cachedMenuFetched = 0;
+      loadMenu();
     } catch (e) {
       addToast(e?.message || 'Failed to save subcategory', 'error');
     } finally {
@@ -294,28 +345,64 @@ export default function MenuPage() {
     }
   };
 
-  const handleSubCatDelete = async (s) => {
-    const itemCount = menuItems.filter(m => m.subcategoryId === s.id).length;
-    let moveTo;
-    if (itemCount > 0) {
-      const siblings = subcategories.filter(x => x.categoryId === s.categoryId && x.id !== s.id && x.isActive);
-      if (siblings.length === 0) {
-        moveTo = 'none'; // no siblings — items drop to None (still visible under the category)
-      } else {
-        moveTo = String(siblings[0].id); // move into the first sibling
-      }
+  // Deleting always goes through the confirmation dialog. When menu items use
+  // the subcategory the dialog must state that and require an explicit
+  // destination — menu items are never deleted along with the subcategory.
+  const openSubCatDelete = (s) => {
+    const itemCount = menuItems.filter(m => Number(m.subcategoryId) === Number(s.id)).length;
+    const siblings = subcategories.filter(x =>
+      Number(x.categoryId) === Number(s.categoryId) && x.id !== s.id && x.isActive
+    );
+    setSubCatDeleteTarget({
+      sub: s,
+      itemCount,
+      siblings,
+      // Pre-select a sibling when one exists; the user still has to confirm and
+      // can switch the destination to None.
+      moveTo: itemCount > 0 && siblings.length > 0 ? String(siblings[0].id) : 'none',
+    });
+  };
+
+  const confirmSubCatDelete = async () => {
+    const target = subCatDeleteTarget;
+    if (!target || subCatDeleting) return;
+    if (target.itemCount > 0 && !target.moveTo) {
+      addToast('Choose where the items using this subcategory should go', 'error');
+      return;
     }
+    const destinationName = target.moveTo === 'none'
+      ? 'None'
+      : (target.siblings.find(x => String(x.id) === String(target.moveTo))?.name || 'another subcategory');
+    setSubCatDeleting(true);
     try {
-      await menuApi.deleteSubcategory(s.id, moveTo);
-      addToast(itemCount > 0 ? `Deleted — ${itemCount} item(s) reassigned.` : 'Subcategory deleted', 'success');
-      if (editingSubCat?.id === s.id) setEditingSubCat(null);
+      // No move target is sent when nothing references the subcategory.
+      await menuApi.deleteSubcategory(target.sub.id, target.itemCount > 0 ? target.moveTo : undefined);
+      addToast(
+        target.itemCount > 0
+          ? `"${target.sub.name}" deleted — ${target.itemCount} item(s) moved to ${destinationName}`
+          : `"${target.sub.name}" deleted`,
+        'success'
+      );
+      if (editingSubCat?.id === target.sub.id) cancelSubCatEdit();
+      setSubCatDeleteTarget(null);
       loadSubcategories();
       cachedMenuFetched = 0;
       loadMenu();
     } catch (e) {
       addToast(e?.message || 'Failed to delete subcategory', 'error');
+    } finally {
+      setSubCatDeleting(false);
     }
   };
+
+  // ── Selected subcategory category id (BUGFIX) ───────────────────────────
+  // The Category <select> is populated from `categories`, whose ids carry the
+  // UI token `cat-<id>` (e.g. "cat-3"), while every subcategory row carries the
+  // raw NUMERIC categoryId from the API. Comparing the two raw values counted
+  // zero matches, so the list rendered empty and the Edit / Delete controls were
+  // unreachable — and the duplicate-name guard below never fired either.
+  // Normalize BOTH sides to the numeric category id, once, here.
+  const subCatsForSelectedCategory = subcategoriesForCategoryId(subcategories, subCatCategory);
 
   // ── Category CRUD Handlers ───────────────────────────────────
   const resetCatForm = () => {
@@ -440,6 +527,16 @@ export default function MenuPage() {
       addToast('Please enter a price greater than 0', 'error');
       return;
     }
+    if (acNonAcPricing) {
+      if (itemAcPrice !== '' && toNumber(itemAcPrice) < 0) {
+        addToast('AC price cannot be negative', 'error');
+        return;
+      }
+      if (itemNonAcPrice !== '' && toNumber(itemNonAcPrice) < 0) {
+        addToast('Non-AC price cannot be negative', 'error');
+        return;
+      }
+    }
     const matchedCategory = categories.find(c => c.name === itemCategory);
     if (!itemCategory || !matchedCategory) {
       addToast('Please select a valid category', 'error');
@@ -461,6 +558,12 @@ export default function MenuPage() {
       const payload = {
         name: itemName.trim(),
         price: toNumber(itemPrice),
+        // Restaurant mode sends both AC and Non-AC prices; empty → null so the
+        // backend mirrors the base price. Other modes omit them entirely.
+        ...(acNonAcPricing ? {
+          acPrice: itemAcPrice === '' ? null : toNumber(itemAcPrice),
+          nonAcPrice: itemNonAcPrice === '' ? null : toNumber(itemNonAcPrice),
+        } : {}),
         description: itemDesc,
         image: itemImage,
         imagePublicId: itemImagePublicId,
@@ -504,6 +607,8 @@ export default function MenuPage() {
     setEditingId(null);
     setItemName('');
     setItemPrice(150);
+    setItemAcPrice('');
+    setItemNonAcPrice('');
     setItemCategory(categories[0]?.name || '');
     setItemDesc('');
     setItemImage('');
@@ -521,6 +626,27 @@ export default function MenuPage() {
     setItemStockQty(50);
     setItemTax(settings.gstPercentage || 5);
     setItemKitchenCategory('Main Course');
+  };
+
+  // ── Add Item defaults (Part 2) ────────────────────────────────────────────
+  // Add Item inherits whatever the Menu & Stock view currently has selected.
+  // The values are derived from the LIVE view state at open time, so a stale
+  // selection from a previously viewed category can never leak into the form,
+  // and a subcategory is applied only when it genuinely belongs to the category
+  // being applied (otherwise the existing default — None — is kept).
+  const currentViewItemDefaults = () => resolveItemDefaults({
+    selectedCategory,
+    selectedSubcategory,
+    categories,
+    subcategories,
+  });
+
+  const openAddItemModal = () => {
+    resetForm();
+    const { categoryName, subcategoryId } = currentViewItemDefaults();
+    if (categoryName) setItemCategory(categoryName);
+    setItemSubcategoryId(subcategoryId);
+    setShowModal(true);
   };
 
   const handleDeleteConfirm = async () => {
@@ -661,7 +787,7 @@ export default function MenuPage() {
           <button onClick={() => { cachedMenuFetched = 0; loadMenu(); }} className="p-2 hover:bg-slate-100 rounded-lg cursor-pointer">
             <RefreshCw className={`w-4 h-4 text-slate-500 ${loading ? 'animate-spin' : ''}`} />
           </button>
-          <button onClick={() => { resetForm(); if (selectedCategory !== 'All') setItemCategory(selectedCategory); setShowModal(true); }}
+          <button onClick={openAddItemModal}
             className="h-8.5 px-3 bg-[#16A34A] hover:bg-[#15803D] text-white font-bold rounded-xl text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-xs transition-all cursor-pointer">
             <Plus className="w-4 h-4" /> Add Item
           </button>
@@ -738,12 +864,24 @@ export default function MenuPage() {
           Dietary dropdown only for food businesses (§9). */}
       <div className="flex flex-wrap items-center gap-2 w-full">
         {isDietaryBusiness && (
-        <select value={filterDietary} onChange={(e) => setFilterDietary(e.target.value)}
-          className="h-10 px-2 bg-white border border-slate-200 rounded-xl text-[10px] font-bold outline-none focus:border-[#16A34A] cursor-pointer shrink-0">
-          <option value="All">Veg + Non-Veg</option>
-          <option value="VEG">Veg Only</option>
-          <option value="NON_VEG">Non-Veg Only</option>
+        <select value={filterDietary} onChange={(e) => setFilterDietary(clampDietaryFilter(e.target.value, settings.dietaryMode))}
+          disabled={restaurantVegOnly}
+          aria-label="Food type filter"
+          title={restaurantVegOnly
+            ? 'This restaurant is configured for Veg Only'
+            : 'Filter items by food type'}
+          className={`h-10 px-2 bg-white border border-slate-200 rounded-xl text-[10px] font-bold outline-none focus:border-[#16A34A] shrink-0 ${restaurantVegOnly ? 'cursor-not-allowed opacity-90' : 'cursor-pointer'}`}>
+          {dietaryFilterChoices.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
         </select>
+        )}
+        {/* Veg Only is the saved restaurant configuration — explain why the
+            filter is fixed (no Veg + Non-Veg / Non-Veg Only option exists). */}
+        {isDietaryBusiness && restaurantVegOnly && (
+          <span className="h-10 inline-flex items-center gap-1.5 px-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-bold shrink-0">
+            <Leaf className="w-3 h-3" /> Veg Only · set by the restaurant configuration
+          </span>
         )}
         <div className="relative w-full sm:w-[300px] sm:min-w-[260px] sm:flex-shrink-0">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -835,6 +973,8 @@ export default function MenuPage() {
                   <div className="flex gap-1">
                     <button onClick={() => {
                       setEditingId(item.id); setItemName(item.name); setItemPrice(item.price);
+                      setItemAcPrice(item.acPrice != null ? String(item.acPrice) : '');
+                      setItemNonAcPrice(item.nonAcPrice != null ? String(item.nonAcPrice) : '');
                       setItemCategory(item.category); setItemDesc(item.description);
                       // Never send the UI placeholder back to the backend: a no-image
                       // item must submit an empty image reference (the backend rejects
@@ -896,22 +1036,32 @@ export default function MenuPage() {
                       <label className="text-[9px] font-bold uppercase text-slate-400">{editingSubCat ? 'Edit Subcategory' : 'Add Subcategory'}</label>
                       <input type="text" placeholder="e.g. Classic Pizza" value={subCatForm.name}
                         onChange={(e) => setSubCatForm({ ...subCatForm, name: e.target.value })}
+                        aria-label="Subcategory name"
                         className="w-full h-9 px-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-[#16A34A]" />
                     </div>
-                    <button onClick={handleSubCatSubmit} disabled={subCatSaving || !subCatForm.name.trim()}
-                      className="h-9 px-3 bg-[#16A34A] hover:bg-[#15803D] text-white font-bold rounded-lg text-[10px] uppercase tracking-wider cursor-pointer disabled:opacity-50">
-                      {editingSubCat ? 'Save' : 'Add'}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {/* Cancel only makes sense while editing an existing row. */}
+                      {editingSubCat && (
+                        <button type="button" onClick={cancelSubCatEdit}
+                          className="h-9 px-3 bg-white hover:bg-slate-50 border border-slate-200 text-slate-500 font-bold rounded-lg text-[10px] uppercase tracking-wider cursor-pointer">
+                          Cancel
+                        </button>
+                      )}
+                      <button onClick={handleSubCatSubmit} disabled={subCatSaving || !subCatForm.name.trim()}
+                        className="h-9 px-3 bg-[#16A34A] hover:bg-[#15803D] text-white font-bold rounded-lg text-[10px] uppercase tracking-wider cursor-pointer disabled:opacity-50">
+                        {editingSubCat ? 'Save' : 'Add'}
+                      </button>
+                    </div>
                   </div>
 
                   {/* List for this category */}
                   <div className="space-y-1.5">
-                    {subcategories.filter(s => String(s.categoryId) === String(subCatCategory)).map(s => (
+                    {subCatsForSelectedCategory.map(s => (
                       <div key={s.id} className="flex items-center gap-2 p-2.5 border border-slate-200 rounded-lg">
                         <div className="flex-1 min-w-0">
                           <p className={`text-xs font-bold truncate ${s.isActive ? 'text-slate-800' : 'text-slate-400 line-through'}`}>{s.name}</p>
                           <p className="text-[9px] text-slate-400">
-                            {menuItems.filter(m => m.subcategoryId === s.id).length} items · {s.isActive ? 'Active' : 'Inactive'}
+                            {menuItems.filter(m => Number(m.subcategoryId) === Number(s.id)).length} items · {s.isActive ? 'Active' : 'Inactive'}
                           </p>
                         </div>
                         <button onClick={() => handleSubCatToggle(s)}
@@ -919,17 +1069,69 @@ export default function MenuPage() {
                           {s.isActive ? 'Deactivate' : 'Activate'}
                         </button>
                         <button onClick={() => { setEditingSubCat(s); setSubCatForm({ name: s.name, description: '', sortOrder: s.sortOrder || 0 }); }}
-                          className="p-1.5 bg-slate-100 hover:bg-blue-100 rounded text-slate-500 cursor-pointer" title="Edit"><Edit className="w-3 h-3" /></button>
-                        <button onClick={() => handleSubCatDelete(s)}
-                          className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded cursor-pointer" title="Delete"><Trash className="w-3 h-3" /></button>
+                          className="p-1.5 bg-slate-100 hover:bg-blue-100 rounded text-slate-500 cursor-pointer"
+                          title="Edit subcategory" aria-label={`Edit subcategory ${s.name}`}><Edit className="w-3 h-3" /></button>
+                        <button onClick={() => openSubCatDelete(s)}
+                          className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded cursor-pointer"
+                          title="Delete subcategory" aria-label={`Delete subcategory ${s.name}`}><Trash className="w-3 h-3" /></button>
                       </div>
                     ))}
-                    {subcategories.filter(s => String(s.categoryId) === String(subCatCategory)).length === 0 && (
+                    {subCatsForSelectedCategory.length === 0 && (
                       <p className="text-[10px] text-slate-400 italic text-center py-2">No subcategories yet for this category.</p>
                     )}
                   </div>
                 </>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── DELETE SUBCATEGORY — CONFIRMATION (Part 15) ── */}
+      {subCatDeleteTarget && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs"
+          onClick={() => { if (!subCatDeleting) setSubCatDeleteTarget(null); }}>
+          <div className="bg-white w-full max-w-sm rounded-xl shadow-xl border border-slate-100" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 bg-slate-50 border-b border-slate-100 flex justify-between items-center rounded-t-xl">
+              <h4 className="font-extrabold text-xs uppercase tracking-wider text-slate-800">Delete Subcategory</h4>
+              <button onClick={() => { if (!subCatDeleting) setSubCatDeleteTarget(null); }}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer" aria-label="Close"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="p-4 space-y-3">
+              <p className="text-xs text-slate-700">
+                Delete <span className="font-bold">{subCatDeleteTarget.sub.name}</span> from{' '}
+                <span className="font-bold">{subCatDeleteTarget.sub.categoryName || 'this category'}</span>?
+              </p>
+              {subCatDeleteTarget.itemCount > 0 ? (
+                <>
+                  <p className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    {subCatDeleteTarget.itemCount} menu item(s) use this subcategory. They will NOT be deleted —
+                    choose where they should move.
+                  </p>
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-bold uppercase text-slate-400">Move items to</label>
+                    <select value={subCatDeleteTarget.moveTo}
+                      onChange={(e) => setSubCatDeleteTarget({ ...subCatDeleteTarget, moveTo: e.target.value })}
+                      aria-label="Move items to"
+                      className="w-full h-9 px-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-[#16A34A]">
+                      <option value="none">None (no subcategory)</option>
+                      {subCatDeleteTarget.siblings.map((x) => (
+                        <option key={x.id} value={String(x.id)}>{x.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              ) : (
+                <p className="text-[11px] text-slate-500">No menu items use this subcategory. This cannot be undone.</p>
+              )}
+            </div>
+            <div className="px-4 pb-4 pt-1 flex gap-2">
+              <button onClick={() => setSubCatDeleteTarget(null)} disabled={subCatDeleting}
+                className="flex-1 h-9 bg-white hover:bg-slate-50 border border-slate-200 text-slate-500 font-bold rounded-lg uppercase tracking-wider text-xs cursor-pointer disabled:opacity-50">Cancel</button>
+              <button onClick={confirmSubCatDelete} disabled={subCatDeleting}
+                className="flex-1 h-9 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg uppercase tracking-wider text-xs cursor-pointer disabled:opacity-50">
+                {subCatDeleting ? 'Deleting…' : 'Delete'}
+              </button>
             </div>
           </div>
         </div>
@@ -1137,7 +1339,7 @@ export default function MenuPage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="text-[9px] font-bold uppercase text-slate-400">Price ({currency}) *</label>
+                  <label className="text-[9px] font-bold uppercase text-slate-400">{acNonAcPricing ? 'Base Price' : 'Price'} ({currency}) *</label>
                   {/* no-spinner: direct numeric entry only — no increment/decrement arrows */}
                   <input type="number" step="0.01" inputMode="decimal" value={itemPrice} onChange={(e) => setItemPrice(sanitizeNumeric(e.target.value))}
                     className="no-spinner w-full h-8 px-2 bg-slate-50 border rounded-lg outline-none" required />
@@ -1150,6 +1352,27 @@ export default function MenuPage() {
                   </select>
                 </div>
               </div>
+
+              {/* AC / Non-AC pricing (RESTAURANT mode only). Blank values fall
+                  back to the base price; the active price is chosen automatically
+                  by the selected table's floor. */}
+              {acNonAcPricing && (
+                <div className="space-y-1">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-bold uppercase text-slate-400">Non-AC Price ({currency})</label>
+                      <input type="number" step="0.01" inputMode="decimal" value={itemNonAcPrice} onChange={(e) => setItemNonAcPrice(sanitizeNumeric(e.target.value))}
+                        placeholder="Same as base" className="no-spinner w-full h-8 px-2 bg-slate-50 border rounded-lg outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-bold uppercase text-slate-400">AC Price ({currency})</label>
+                      <input type="number" step="0.01" inputMode="decimal" value={itemAcPrice} onChange={(e) => setItemAcPrice(sanitizeNumeric(e.target.value))}
+                        placeholder="Same as base" className="no-spinner w-full h-8 px-2 bg-slate-50 border rounded-lg outline-none" />
+                    </div>
+                  </div>
+                  <p className="text-[8px] text-slate-400 leading-snug">AC and Non-AC prices are automatically applied based on the selected table's floor.</p>
+                </div>
+              )}
 
               {/* Subcategory (Part 16) — depends on the selected category */}
               <div className="space-y-1">
