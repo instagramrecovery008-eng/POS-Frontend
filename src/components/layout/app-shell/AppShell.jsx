@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, lazy, Suspense } from 'react';
+import React, { useEffect, useRef, useState, lazy, Suspense } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import Sidebar from '../sidebar/Sidebar';
@@ -6,6 +6,7 @@ import Header from '../header/Header';
 import { useAuthStore, useUiStore, useSettingsStore, useCartStore } from '../../../store';
 import LoginPage from '../../../features/auth/pages/LoginPage';
 import ForceChangePasswordPage from '../../../features/auth/pages/ForceChangePasswordPage';
+import SetPasswordPage, { getPasswordSetupParams } from '../../../features/auth/pages/SetPasswordPage';
 import { useSocketConnection, useSocketEvent } from '../../../hooks/useSocket';
 import { invalidateMenuData } from '../../../services/menuSync';
 import DashboardPage from '../../../features/dashboard/pages/DashboardPage';
@@ -255,6 +256,12 @@ export default function AppShell() {
   useSocketEvent({ event: 'order:deleted', handler: invalidateOnOrderChange });
   useSocketEvent({ event: 'order:payment', handler: invalidateOnOrderChange });
 
+  // ── Secure password setup link (?page=set-password&email=…&token=…) ──
+  // Public, pre-auth screen: the single-use link from an account-ready /
+  // password-reset email opens here so the user can set their own password.
+  // Read once from the URL; cleared on completion so a refresh returns to login.
+  const [passwordSetup, setPasswordSetup] = useState(() => getPasswordSetupParams());
+
   const { currentScreen, setScreen } = useUiStore();
   const { user, subscription, onboarding, isUnlocked, isAuthenticated, sessionReady, restoreSession } = useAuthStore();
   const { settings, lastFetched, fetchSettings, moduleVisibilityVersion } = useSettingsStore();
@@ -299,7 +306,7 @@ export default function AppShell() {
   // ── Auto-load restaurant settings ONCE the session is known to be an ACTIVE
   // POS account. Onboarding applicants (restaurant not ACTIVE yet) must never
   // call POS-protected endpoints, so they are skipped here — their settings
-  // load on “Enter Restaurant POS” after activation.
+  // load on “Enter KlarGo POS” after activation.
   const autoSettingsFetchedRef = useRef(false);
   useEffect(() => {
     if (!sessionReady || !isAuthenticated || !user) return;
@@ -437,6 +444,23 @@ export default function AppShell() {
       setScreen('expired_locked');
     }
   }, [isAuthenticated, isUnlocked, user, subscription, currentScreen, setScreen]);
+
+  // ── Secure password setup — rendered before ANY session/auth logic ──
+  // The visitor is intentionally unauthenticated; this must never be gated.
+  if (passwordSetup) {
+    return (
+      <SetPasswordPage
+        email={passwordSetup.email}
+        token={passwordSetup.token}
+        onDone={() => {
+          // Drop the token from the URL so a refresh cannot reopen a used link.
+          try { window.history.replaceState({}, '', window.location.pathname || '/'); } catch (_) { /* ignore */ }
+          setPasswordSetup(null);
+          useUiStore.getState().setScreen('login');
+        }}
+      />
+    );
+  }
 
   // ── Show loading spinner while session is being restored ──
   if (!sessionReady) {

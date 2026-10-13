@@ -13,7 +13,7 @@ export function Field({ label, error, required, hint, className, ...props }) {
       )}
       <input
         className={cn(
-          'w-full h-10 px-3 bg-slate-50 border border-slate-200 hover:border-slate-300 focus:border-[#16A34A] focus:bg-white rounded-xl outline-none text-xs font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed',
+          'w-full h-11 px-3 bg-slate-50 border border-slate-200 hover:border-slate-300 focus:border-[#16A34A] focus:bg-white rounded-xl outline-none text-xs font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed',
           error && 'border-red-300 focus:border-red-500 bg-red-50',
           className
         )}
@@ -39,7 +39,7 @@ export function Select({ label, error, required, children, className, ...props }
       )}
       <select
         className={cn(
-          'w-full h-10 px-3 bg-slate-50 border border-slate-200 hover:border-slate-300 focus:border-[#16A34A] focus:bg-white rounded-xl outline-none text-xs font-semibold transition-all disabled:opacity-50',
+          'w-full h-11 px-3 bg-slate-50 border border-slate-200 hover:border-slate-300 focus:border-[#16A34A] focus:bg-white rounded-xl outline-none text-xs font-semibold transition-all disabled:opacity-50',
           error && 'border-red-300 bg-red-50',
           className
         )}
@@ -54,15 +54,17 @@ export function Select({ label, error, required, children, className, ...props }
 
 /* ─── Bottom action bar (Back / primary Continue) ───────────────────────── */
 export function StepActions({ onBack, backDisabled, onContinue, continueDisabled, loading, continueLabel = 'Continue', children, onExitToLogin }) {
+  // Stacks on narrow screens (320px) so Back / Return to Login / Continue are
+  // never clipped, and every control is a >=44px touch target.
   return (
-    <div className="flex items-center justify-between gap-3 mt-6 pt-5 border-t border-slate-100">
-      <div className="flex items-center">
+    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-6 pt-5 border-t border-slate-100">
+      <div className="flex flex-wrap items-center gap-2">
         {onBack && (
           <button
             type="button"
             onClick={onBack}
             disabled={backDisabled || loading}
-            className="h-10 px-4 bg-white border border-slate-200 text-slate-600 rounded-xl text-xs font-bold hover:bg-slate-50 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+            className="h-11 px-4 bg-white border border-slate-200 text-slate-600 rounded-xl text-xs font-bold hover:bg-slate-50 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center justify-center gap-1.5"
           >
             <ChevronLeft className="w-3.5 h-3.5" /> Back
           </button>
@@ -71,13 +73,13 @@ export function StepActions({ onBack, backDisabled, onContinue, continueDisabled
           <button
             type="button"
             onClick={onExitToLogin}
-            className="ml-2 h-10 px-4 bg-white border border-slate-200 text-slate-500 rounded-xl text-xs font-bold hover:bg-slate-50 hover:text-slate-700 transition-all cursor-pointer inline-flex items-center gap-1.5"
+            className="h-11 px-4 bg-white border border-slate-200 text-slate-500 rounded-xl text-xs font-bold hover:bg-slate-50 hover:text-slate-700 transition-all cursor-pointer inline-flex items-center justify-center gap-1.5"
           >
             <LogIn className="w-3.5 h-3.5" /> Return to Login
           </button>
         )}
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 sm:justify-end">
         {children}
         {onContinue && (
           <button
@@ -85,7 +87,7 @@ export function StepActions({ onBack, backDisabled, onContinue, continueDisabled
             onClick={onContinue}
             disabled={continueDisabled || loading}
             aria-busy={loading}
-            className="h-10 px-5 bg-[#16A34A] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5 shadow-sm"
+            className="h-11 flex-1 sm:flex-none px-5 bg-[#16A34A] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center justify-center gap-1.5 shadow-sm"
           >
             {loading ? (
               <><Loader2 className="w-3.5 h-3.5 animate-spin" /> {loading}</>

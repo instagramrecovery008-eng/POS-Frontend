@@ -8,7 +8,7 @@ import ConfirmationDialog from '../../../components/ConfirmationDialog';
 const SECRET_MASK = '********';
 
 const SETTING_FIELDS = [
-  { key: 'platform_name', label: 'Platform Name', type: 'text', default: 'Nirka POS' },
+  { key: 'platform_name', label: 'Platform Name', type: 'text', default: 'KlarGo POS' },
   { key: 'default_trial_days', label: 'Default Trial Days', type: 'number', default: 15 },
   { key: 'maintenance_mode', label: 'Maintenance Mode', type: 'boolean', default: false },
   { key: 'max_file_upload_mb', label: 'Max File Upload (MB)', type: 'number', default: 5 },

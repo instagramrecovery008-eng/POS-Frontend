@@ -2,7 +2,7 @@
  * Shared order-flow resolution helpers (Parts 7/8/9).
  *
  * ONE rule set for both order-entry surfaces:
- *   - Full Restaurant POS       (TakeOrderWizard)
+ *   - Full KlarGo POS           (TakeOrderWizard)
  *   - Basic POS / Quick Billing (PosWorkspace)
  *
  * The frontend helpers only shape the UI flow (which steps to show, what to

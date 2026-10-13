@@ -172,7 +172,7 @@ export default function DocumentsStep({ onBack, onDone, onExitToLogin }) {
             </Select>
             <div className="space-y-1">
               <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">File</label>
-              <label className={`flex items-center justify-center gap-2 h-10 px-3 border rounded-xl text-xs font-semibold transition-all cursor-pointer ${errors.file ? 'border-red-300 bg-red-50 text-red-600' : 'border-slate-200 bg-white text-slate-500 hover:border-[#16A34A]/60'}`}>
+              <label className={`flex items-center justify-center gap-2 h-11 px-3 border rounded-xl text-xs font-semibold transition-all cursor-pointer ${errors.file ? 'border-red-300 bg-red-50 text-red-600' : 'border-slate-200 bg-white text-slate-500 hover:border-[#16A34A]/60'}`}>
                 <UploadCloud className="w-4 h-4 shrink-0" />
                 <span className="truncate max-w-[210px]">{file ? file.name : 'Choose file…'}</span>
                 <input type="file" className="hidden" accept={allowedExt.join(',')}
@@ -210,7 +210,7 @@ export default function DocumentsStep({ onBack, onDone, onExitToLogin }) {
             type="button"
             onClick={handleUpload}
             disabled={uploading || !!uploadError}
-            className="mt-4 h-9 px-4 bg-[#16A34A] hover:bg-[#15803D] disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer inline-flex items-center gap-1.5 shadow-sm"
+            className="mt-4 h-11 px-4 bg-[#16A34A] hover:bg-[#15803D] disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer inline-flex items-center gap-1.5 shadow-sm"
           >
             {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UploadCloud className="w-3.5 h-3.5" />}
             {uploading ? 'Uploading…' : 'Upload Document'}

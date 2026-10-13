@@ -36,7 +36,7 @@ export default function ForceChangePasswordPage() {
     e.preventDefault();
     if (busy) return;
     setError('');
-    if (!currentPassword) { setError('Enter the temporary password from your email.'); return; }
+    if (!currentPassword) { setError('Enter your current temporary password.'); return; }
     if (newPassword.length < 8) { setError('New password must be at least 8 characters long.'); return; }
     if (newPassword === currentPassword) { setError('New password cannot be the same as the current password.'); return; }
     if (newPassword !== confirmPassword) { setError('Passwords do not match.'); return; }
@@ -73,7 +73,7 @@ export default function ForceChangePasswordPage() {
         <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 mb-5">
           <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
           <p className="text-[11px] font-semibold text-amber-800 leading-relaxed">
-            You are using a temporary password that was emailed to you. You must set a new
+            Your account is still using a temporary password. You must set a new
             password before you can continue. The temporary password stops working after this.
           </p>
         </div>
@@ -88,7 +88,7 @@ export default function ForceChangePasswordPage() {
                 onChange={(e) => { setCurrentPassword(e.target.value); setError(''); }}
                 autoComplete="current-password"
                 className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 pr-10 text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#16A34A]/40"
-                placeholder="From the email"
+                placeholder="Enter your temporary password"
               />
               <button type="button" onClick={() => setShow((s) => !s)}
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">

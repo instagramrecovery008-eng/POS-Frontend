@@ -8,9 +8,9 @@ import { X } from 'lucide-react';
 export const POLICY_CONTENT = {
   TERMS_OF_SERVICE: {
     title: 'Terms & Conditions',
-    body: `Welcome to Nirka POS. These Terms & Conditions govern your use of the platform.
+    body: `Welcome to KlarGo POS. These Terms & Conditions govern your use of the platform.
 
-1. Service. Nirka POS provides cloud restaurant management software (billing, orders, kitchen display, reports) under the plan you select.
+1. Service. KlarGo POS provides cloud restaurant management software (billing, orders, kitchen display, reports) under the plan you select.
 2. Your account. You are responsible for safeguarding your login credentials and for all activity under your account. Business information you provide must be accurate.
 3. Subscriptions & billing. Plans are billed yearly in advance. Your workspace activates only after payment has been verified by the platform. Refunds are governed by the platform's refund policy.
 4. Acceptable use. You agree not to misuse the platform, attempt unauthorised access, or interfere with other tenants.

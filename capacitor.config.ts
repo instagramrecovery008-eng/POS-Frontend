@@ -15,13 +15,11 @@ import type { CapacitorConfig } from '@capacitor/cli';
  *   Android Studio / Gradle  → Debug APK, Release APK, Play AAB
  */
 const config: CapacitorConfig = {
-  // Unique Android application ID. The product is "Restaurant POS" (pos-buff-tavern
-  // / restaurant-pos package name); no existing package ID was configured before
-  // this change, so this derives one from the product identity.
+  // Unique Android application ID. Kept as-is: it is a technical identifier
+  // (Play Store package), not user-facing branding.
   appId: 'com.restaurantpos.app',
-  // Product name — must match existing branding ("Restaurant POS",
-  // index.html <title> and metadata.json "POS App" family). Not a new brand.
-  appName: 'Restaurant POS',
+  // Product name — must match the platform branding ("KlarGo POS").
+  appName: 'KlarGo POS',
   // The existing Vite build output — shared verbatim with the web deployment.
   webDir: 'dist',
 };

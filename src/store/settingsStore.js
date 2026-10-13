@@ -128,13 +128,15 @@ const defaultSettings = {
   businessType: 'RESTAURANT',
   capabilities: getBusinessCapabilities('RESTAURANT'),
   branding: {
-    logo: '',
-    restaurantName: 'Nirka POS',
+    // Bundled KlarGo logo (frontend/public). Shown until an admin uploads a
+    // custom restaurant logo via Settings, which overrides these on fetch.
+    logo: '/klargo-logo.png',
+    restaurantName: 'KlarGo POS',
     ownerName: '',
-    loginLogo: '',
-    sidebarLogo: '',
-    receiptLogo: '',
-    invoiceLogo: '',
+    loginLogo: '/klargo-logo.png',
+    sidebarLogo: '/klargo-icon.png',
+    receiptLogo: '/klargo-logo.png',
+    invoiceLogo: '/klargo-logo.png',
   },
   // POS Configuration
   language: 'English',

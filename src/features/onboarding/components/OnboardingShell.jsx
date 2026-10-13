@@ -13,16 +13,22 @@ export default function OnboardingShell({ page, children, banner, onLogout }) {
   const currentIndex = progressIndexForPage(page);
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] flex flex-col select-none font-sans">
+    // Full-height column using the DYNAMIC viewport height (100dvh) so mobile
+    // browser chrome / the on-screen keyboard never clip the wizard, with
+    // safe-area padding for notches and gesture bars. Scrolling is the browser's
+    // own document scroll — never a custom/disabled-scroll solution.
+    <div className="min-h-[100dvh] bg-[#F8FAFC] flex flex-col font-sans overflow-x-clip pt-safe pb-safe">
       {/* ── Platform brand header ── */}
       <header className="bg-white border-b border-slate-200 px-4 sm:px-6 py-3 flex items-center justify-between shadow-sm shrink-0">
         <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 bg-[#16A34A] rounded-[10px] flex items-center justify-center">
-            <span className="text-white text-base font-extrabold font-serif leading-none">N</span>
-          </div>
+          <img
+            src="/klargo-icon.png"
+            alt="KlarGo"
+            className="w-9 h-9 rounded-[10px] object-cover bg-white"
+          />
           <div>
             <h1 className="text-sm font-extrabold tracking-tight text-[#16A34A] uppercase leading-none">
-              Nirka POS
+              KlarGo POS
             </h1>
             <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
               Business Onboarding
@@ -82,13 +88,16 @@ export default function OnboardingShell({ page, children, banner, onLogout }) {
       {banner && <div className="px-4 sm:px-8 pt-4">{banner}</div>}
 
       {/* ── Active step ── */}
-      <main className="flex-1 w-full max-w-3xl mx-auto px-4 sm:px-6 py-6 sm:py-8 overflow-y-auto">
+      {/* flex-1 lets the content define the height; the page (body) scrolls
+          normally so every field and the bottom action buttons are reachable on
+          phones, tablets and desktops. No fixed heights, no nested scrollers. */}
+      <main className="flex-1 w-full max-w-3xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
         {children}
       </main>
 
       <footer className="shrink-0 py-3 text-center">
         <p className="text-[10px] text-slate-400 font-medium">
-          &copy; 2026 Nirka POS. All rights reserved.
+          &copy; 2026 Infinixo Technologies. All rights reserved.
         </p>
       </footer>
     </div>

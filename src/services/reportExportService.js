@@ -194,7 +194,7 @@ function buildFullHeaderHtml(info) {
       <div style="flex-shrink:0;">${buildLogoHtml(info)}</div>
       <div style="flex:1;min-width:0;">
         <div style="font-size:20px;font-weight:800;color:${BRAND.dark};line-height:1.2;letter-spacing:-0.3px;">${esc(info.name)}</div>
-        <div style="font-size:9px;color:${BRAND.slate};margin-top:2px;font-weight:500;letter-spacing:0.5px;text-transform:uppercase;">Nirka POS · Management System</div>
+        <div style="font-size:9px;color:${BRAND.slate};margin-top:2px;font-weight:500;letter-spacing:0.5px;text-transform:uppercase;">KlarGo POS · Management System</div>
         ${details ? `<div style="font-size:9px;color:${BRAND.slateMid};margin-top:5px;">${esc(details)}</div>` : ''}
         ${contactParts ? `<div style="font-size:9px;color:${BRAND.slateMid};margin-top:2px;">${contactParts}</div>` : ''}
       </div>
@@ -298,7 +298,7 @@ function buildFooterHtml(info, generatedAt) {
       <div class="footer-left">
         <span class="footer-brand">${esc(info.name)}</span>
         <span class="footer-sep">·</span>
-        <span>Nirka POS</span>
+        <span>KlarGo POS</span>
       </div>
       <div class="footer-right">
         <span>Generated: ${esc(generatedAt)}</span>
@@ -338,7 +338,7 @@ function buildFixedPrintHeaderHtml(info, title, dateRange) {
 function buildFixedPrintFooterHtml(info, generatedAt) {
   return `
     <div class="print-fixed-footer">
-      <span>${esc(info.name)} · Nirka POS</span>
+      <span>${esc(info.name)} · KlarGo POS</span>
       <span>Generated: ${esc(generatedAt)}</span>
     </div>`;
 }

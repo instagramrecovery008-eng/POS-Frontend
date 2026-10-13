@@ -28,7 +28,25 @@ html {
 html,
 body {
   max-width: 100%;
-  overflow-x: hidden;
+}
+
+/* ── ONE document scroll owner ────────────────────────────────────────────
+   CRITICAL: horizontal containment must NOT be applied to <body>. Setting
+   `overflow-x: hidden` there forces <body>'s computed `overflow-y` to `auto`,
+   turning <body> into a scroll container that has no vertical overflow of its
+   own. A touch gesture is then dispatched to that (non-scrollable) body scroll
+   box instead of the viewport, so the page never moves — even though the
+   document is scrollable programmatically.
+   Containment therefore lives on the ROOT element only, using `overflow-x:
+   clip`, which prevents sideways overflow WITHOUT creating a scroll container
+   (`overflow-y` stays `visible`, so <html> remains the single vertical
+   scroller). `hidden` is the fallback for engines without `clip`. */
+html {
+  overflow-x: hidden; /* fallback */
+  overflow-x: clip;   /* modern: creates no scroll container */
+  /* Pull-to-refresh / rubber-band suppression belongs to the ROOT scroller —
+     never to <body>, where it would also block touch scroll chaining. */
+  overscroll-behavior-y: none;
 }
 
 /* Content clears browser/Android system UI — e.g. the fixed API-error
@@ -46,7 +64,6 @@ body {
   color: #111827;
   font-family: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
   -webkit-tap-highlight-color: transparent;
-  overscroll-behavior-y: none;
 }
 
 /* Visible, theme-consistent keyboard focus states (accessibility) */

@@ -101,7 +101,7 @@ export function PendingStatus() {
         <div className="mt-6 rounded-xl border border-slate-100 bg-slate-50/70 px-4 py-3">
           <p className="text-[10px] font-semibold text-slate-500 leading-relaxed">
             Your restaurant application has been submitted successfully. Our administrator will review your application
-            and share payment instructions. Your restaurant POS stays locked until the administrator approves your
+            and share payment instructions. Your KlarGo POS stays locked until the administrator approves your
             application.
           </p>
         </div>
@@ -173,7 +173,7 @@ export function ReviewStatus() {
 
         <div className="mt-6 rounded-xl border border-slate-100 bg-slate-50/70 px-4 py-3 text-left">
           <p className="text-[10px] font-semibold text-slate-500 leading-relaxed">
-            Your business application is now being reviewed. You will receive access to your Restaurant POS after approval.
+            Your business application is now being reviewed. You will receive access to KlarGo POS after approval.
             This page refreshes automatically — no need to log in again.
           </p>
         </div>
@@ -213,7 +213,7 @@ export function ProvisioningStatus() {
         <div className="w-16 h-16 rounded-full bg-[#16A34A]/10 border border-[#16A34A]/20 flex items-center justify-center mx-auto mb-4">
           <Loader2 className="w-8 h-8 animate-spin text-[#16A34A]" />
         </div>
-        <h2 className="text-xl font-extrabold text-slate-800">Setting up your Restaurant POS…</h2>
+        <h2 className="text-xl font-extrabold text-slate-800">Setting up your KlarGo POS…</h2>
         <p className="text-xs text-slate-500 mt-1">{restaurant.name || 'Your business'}</p>
 
         <div className="mt-6 space-y-2 text-left max-w-sm mx-auto">
@@ -361,7 +361,7 @@ export function CompleteStatus() {
         <div className="w-16 h-16 rounded-full bg-[#16A34A]/10 border border-[#16A34A]/20 flex items-center justify-center mx-auto mb-4">
           <CheckCircle2 className="w-9 h-9 text-[#16A34A]" />
         </div>
-        <h2 className="text-xl font-extrabold text-slate-800">Your Restaurant POS is ready!</h2>
+        <h2 className="text-xl font-extrabold text-slate-800">Your KlarGo POS is ready!</h2>
         <p className="text-xs text-slate-500 mt-1">{payload?.account?.label || 'Active'}</p>
 
         <div className="mt-6 rounded-2xl border border-slate-100 bg-slate-50/70 p-5 text-left space-y-2.5">
@@ -409,7 +409,7 @@ export function CompleteStatus() {
             aria-busy={entering}
             className="h-11 rounded-xl bg-[#16A34A] hover:bg-[#15803D] disabled:opacity-60 disabled:cursor-not-allowed text-white font-extrabold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm"
           >
-            {entering ? <><Loader2 className="w-4 h-4 animate-spin" /> Opening your POS…</> : <><ArrowRight className="w-4 h-4" /> Enter Restaurant POS</>}
+            {entering ? <><Loader2 className="w-4 h-4 animate-spin" /> Opening your POS…</> : <><ArrowRight className="w-4 h-4" /> Enter KlarGo POS</>}
           </button>
           <button
             type="button"

@@ -5,11 +5,16 @@ import LoginForm from '../components/LoginForm';
 import { resolveHomeScreen, isSelfServeOnboarding } from '../../onboarding/onboarding.lib';
 import PolicyTextModal from '../../../components/legal/PolicyTextModal';
 
+// Bundled KlarGo logo — used until a restaurant uploads its own via Settings.
+const DEFAULT_LOGO = '/klargo-logo.png';
+
 function RestaurantLogo({ logo, restaurantName }) {
   const [imgError, setImgError] = useState(false);
 
-  // Show initials fallback when no logo or image fails
-  if (!logo || imgError) {
+  const src = logo || DEFAULT_LOGO;
+
+  // Only fall back to initials when the resolved image fails to load.
+  if (!src || imgError) {
     const initials = (restaurantName || 'R')
       .split(' ')
       .filter(Boolean)
@@ -26,7 +31,7 @@ function RestaurantLogo({ logo, restaurantName }) {
 
   return (
     <img
-      src={logo}
+      src={src}
       alt={restaurantName || 'Restaurant logo'}
       className="w-14 h-14 object-cover rounded-2xl border-2 border-slate-200 bg-white"
       onError={() => setImgError(true)}
@@ -128,7 +133,7 @@ export default function LoginPage() {
   };
 
   // Derived display values with safe fallbacks
-  const displayName = branding.name || 'Nirka POS';
+  const displayName = branding.name || 'KlarGo POS';
   const hasRestaurantBranding = brandingLoaded && branding.name;
 
   return (
@@ -136,15 +141,17 @@ export default function LoginPage() {
       {/* ── Platform Branding (above card) ── */}
       <div className="mb-6 flex flex-col items-center text-center animate-fade-in">
         <div className="flex items-center gap-3">
-          <div className="w-12 h-12 bg-[#16A34A] rounded-[14px] flex items-center justify-center shadow-md border border-white/20">
-            <span className="text-white text-2xl font-extrabold font-serif">N</span>
-          </div>
+          <img
+            src="/klargo-icon.png"
+            alt="KlarGo"
+            className="w-12 h-12 rounded-[14px] object-cover shadow-md border border-white/20 bg-white"
+          />
           <div className="text-left">
             <h1 className="text-2xl font-extrabold tracking-tight text-[#16A34A] uppercase leading-none">
-              Nirka POS
+              KlarGo POS
             </h1>
             <p className="text-[10px] text-[#16A34A]/80 font-bold uppercase tracking-wider mt-1">
-              Restaurant Management Platform
+              By Infinixo Technologies
             </p>
           </div>
         </div>
@@ -191,7 +198,7 @@ export default function LoginPage() {
       {/* Footer */}
       <div className="mt-8 text-center space-y-2 max-w-[400px] w-full">
         <p className="text-[10px] text-slate-400 font-medium">
-          &copy; 2026 Nirka POS. All rights reserved.
+          &copy; 2026 Infinixo Technologies. All rights reserved.
         </p>
         <div className="flex items-center justify-center gap-1.5 text-[10px] text-slate-400">
           <button
