@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "node src/__tests__/run.js && node src/__tests__/wizard-preview.test.js && node src/__tests__/ac-non-ac-pricing.test.js && node src/__tests__/subscription-profile-ui.test.js && node src/__tests__/discounts.test.js && node src/__tests__/dietary-mode-persistence.test.js && node src/__tests__/menu-item-defaults.test.js && node src/__tests__/subcategory-manage-ui.test.js && node src/__tests__/floor-access-rule.test.js",
+    "test": "node src/__tests__/run.js && node src/__tests__/wizard-preview.test.js && node src/__tests__/open-table-kot-flow.test.js && node src/__tests__/ac-non-ac-pricing.test.js && node src/__tests__/subscription-profile-ui.test.js && node src/__tests__/discounts.test.js && node src/__tests__/dietary-mode-persistence.test.js && node src/__tests__/menu-item-defaults.test.js && node src/__tests__/subcategory-manage-ui.test.js && node src/__tests__/floor-access-rule.test.js",
     "verify:onboarding-scroll": "node scripts/onboarding-scroll-verify.mjs",
     "android:sync": "npm run build && npx cap sync android",
     "android:open": "npx cap open android"

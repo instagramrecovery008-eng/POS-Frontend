@@ -135,6 +135,10 @@ const defaultSettings = {
     ownerName: '',
     loginLogo: '/klargo-logo.png',
     sidebarLogo: '/klargo-icon.png',
+    // The logo the TENANT actually uploaded (empty until one is configured).
+    // Surfaces such as the sidebar use it so a restaurant without a logo gets
+    // its own initials instead of the generic platform mark.
+    customLogo: '',
     receiptLogo: '/klargo-logo.png',
     invoiceLogo: '/klargo-logo.png',
   },
@@ -314,6 +318,9 @@ const useSettingsStore = create((set, get) => ({
               logo: s.logo || base.branding.logo,
               loginLogo: s.logo || base.branding.loginLogo,
               sidebarLogo: s.logo || base.branding.sidebarLogo,
+              // Only a logo stored on THIS tenant counts as custom (tenant
+              // isolation: another restaurant's logo can never leak in).
+              customLogo: s.logo || '',
               receiptLogo: s.logo || base.branding.receiptLogo,
               invoiceLogo: s.logo || base.branding.invoiceLogo,
             },
@@ -480,6 +487,9 @@ const useSettingsStore = create((set, get) => ({
       uiSettings.branding = { ...(s.branding || {}) };
       delete uiSettings.branding.restaurantName;
       delete uiSettings.branding.logo;
+      // The custom-logo marker is derived from the tenant's persisted logo on
+      // every fetch — never persisted as a UI setting of its own.
+      delete uiSettings.branding.customLogo;
 
       // Build payload for backend - all supported fields
       const apiPayload = {
@@ -490,7 +500,12 @@ const useSettingsStore = create((set, get) => ({
         email: s.email,
         website: s.website,
         address: s.address,
-        logo: s.branding.logo || s.branding.sidebarLogo || '',
+        // Persist ONLY a logo this tenant actually uploaded. The bundled
+        // KlarGo assets are display defaults, not tenant data — writing them
+        // into the tenant's logo column made every restaurant look like it had
+        // "uploaded" the platform logo, so the sidebar could never fall back to
+        // the restaurant's own initials.
+        logo: s.branding.customLogo || '',
         currency: s.currency,
         timezone: s.timezone,
         language: s.language || 'en',
@@ -615,7 +630,8 @@ const useSettingsStore = create((set, get) => ({
     try {
       await settingApi.save({
         restaurantName: settings.branding.restaurantName,
-        logo: settings.branding.logo || settings.branding.sidebarLogo,
+        // Only the tenant's own uploaded logo is persisted (see saveSettings).
+        logo: settings.branding.customLogo || '',
       });
     } catch (e) {
       set({ error: e.message });
@@ -639,6 +655,7 @@ const useSettingsStore = create((set, get) => ({
               sidebarLogo: resp.logo,
               receiptLogo: resp.logo,
               invoiceLogo: resp.logo,
+              customLogo: resp.logo,
             },
           },
         }));
@@ -655,15 +672,15 @@ const useSettingsStore = create((set, get) => ({
       await settingApi.deleteLogo();
       set((state) => ({
         settings: {
-          ...state.settings,
-          branding: {
-            ...state.settings.branding,
-            logo: '',
-            loginLogo: '',
-            sidebarLogo: '',
-            receiptLogo: '',
-            invoiceLogo: '',
-          },
+          ...state.settings,            branding: {
+              ...state.settings.branding,
+              logo: '',
+              loginLogo: '',
+              sidebarLogo: '',
+              receiptLogo: '',
+              invoiceLogo: '',
+              customLogo: '',
+            },
         },
       }));
       return { success: true };

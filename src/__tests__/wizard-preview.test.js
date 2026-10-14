@@ -70,11 +70,13 @@ check(/disabled=\{[^}]*status[^}]*!== 'Available'[^}]*\}/.test(wizard) || wizard
   'occupied/reserved tables render disabled per the existing rules');
 
 sub('15. Back navigation preserved (selections intact when going back)');
-check(/const goBack = \(\) => \{ if \(currentStep > 0\) setCurrentStep/.test(wizard),
+check(/const goBack = \(\) => \{ if \(canGoBack\) setCurrentStep/.test(wizard),
   'Back uses relative -1 (previous step, selections untouched)');
 check(wizard.includes('const goBack = ()'), 'a dedicated goBack() handler exists');
-check(/<button onClick=\{goBack\} disabled=\{currentStep === 0\}/.test(wizard),
-  'Back is disabled at step 0 (no negative step)');
+check(/const canGoBack = currentStep > 0 && !\(isOpenTableFlow && currentStep <= 3\)/.test(wizard),
+  'Open Table flow cannot step back into the skipped order-type/floor/table screens');
+check(/<button onClick=\{goBack\} disabled=\{!canGoBack\}/.test(wizard),
+  'Back is disabled at the first reachable step (no negative step)');
 
 sub('16. No Continue button on auto-advancing steps');
 check(wizard.includes('{currentStep === (isTakeaway ? 1 : 3) && currentStep < maxStep && ('),

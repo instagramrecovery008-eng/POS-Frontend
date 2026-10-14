@@ -129,11 +129,14 @@ check(/if \(!checkoutOrderId \|\| !canBill\) return null;/.test(billingPage), 'o
 
 section('4. UI ACTION GATING (centralized canHandleBilling)');
 
-sub('Kitchen Tickets — Checkout Desk hidden for KITCHEN');
+sub('Kitchen Tickets — production screen only (no Checkout Desk)');
 const kitchenPage = read('features/kitchen/pages/KitchenPage.jsx');
-check(kitchenPage.includes('canHandleBilling'), 'KitchenPage imports canHandleBilling');
-check(/canBill && \(\s*<button[\s\S]*?Checkout Desk/.test(kitchenPage), 'Checkout Desk gated by canBill');
+check(!kitchenPage.includes('Checkout Desk'), 'Checkout Desk button is removed from the kitchen screen');
+check(!kitchenPage.includes('setCheckoutOrderId'), 'no kitchen handler navigates to checkout/billing');
+check(!kitchenPage.includes('canHandleBilling'), 'kitchen screen no longer depends on the billing capability helper');
+check(!kitchenPage.includes('useUiStore'), 'kitchen screen has no screen/payment navigation state');
 check(kitchenPage.includes('Mark as'), 'Mark as Accepted remains available');
+check(kitchenPage.includes('Void Ticket'), 'Void Ticket remains available');
 
 sub('Active Orders — Bill / Checkout / Reprint Bill gated');
 const activeOrdersPage = read('features/orders/pages/ActiveOrdersPage.jsx');

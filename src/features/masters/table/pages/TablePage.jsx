@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Layers, Plus, Edit, Trash, Users, X, ArrowRight, Check, Move, Merge, GripVertical, Split, Loader2 } from 'lucide-react';
 import { useAuthStore, useCartStore, useUiStore, useSettingsStore } from '../../../../store';
 import ConfirmationDialog from '../../../../components/ConfirmationDialog';
@@ -6,6 +6,7 @@ import { tableApi } from '../../../../api/table.api';
 import { floorApi } from '../../../../api/floor.api';
 import orderApi from '../../../../api/order.api';
 import { useSocketEvent } from '../../../../hooks/useSocket';
+import { useBodyScrollLock } from '../../../../hooks/useBodyScrollLock';
 import TableMergeModal from '../components/TableMergeModal';
 import { canHandleBilling } from '../../../../utils/permissions';
 import { isAcNonAcPricingEnabled } from '../../../../utils/businessCapabilities';
@@ -21,7 +22,7 @@ export default function TablesPage() {
   const isServiceStaff = (user?.role || '').toUpperCase() === 'WAITER';
   // Checkout opens the payment overlay — restricted to billing-capable roles
   const canBill = canHandleBilling(user?.role);
-  const { setScreen, setActiveOrderTakingId, setCheckoutOrderId, setShowTakeOrderWizard, addToast, refreshTrigger, incrementRefreshTrigger } = useUiStore();
+  const { setScreen, setActiveOrderTakingId, setCheckoutOrderId, setShowTakeOrderWizard, setPendingTable, addToast, refreshTrigger, incrementRefreshTrigger } = useUiStore();
   const { settings } = useSettingsStore();
   const currency = settings?.currencySymbol || '₹';
   // AC / Non-AC table type is a RESTAURANT-mode feature only — the selector is
@@ -46,7 +47,13 @@ export default function TablesPage() {
   // Modals
   const [showOpenTableModal, setShowOpenTableModal] = useState(false);
   const [guestCount, setGuestCount] = useState(2);
-  const [activeTableNumber, setActiveTableNumber] = useState(null);
+  // The EXACT table the user tapped (full row: backend id + display number),
+  // never a list index or a generic default — two floors can hold tables with
+  // the same visible number, and only the database id is unambiguous.
+  const [openTableTarget, setOpenTableTarget] = useState(null);
+  // Synchronous re-entrancy guard: a double-tap on "Open Table" must not open
+  // the order-entry wizard twice (duplicate order/KOT from repeated requests).
+  const openingTableRef = useRef(false);
   const [showOccupiedModal, setShowOccupiedModal] = useState(false);
   const [selectedOccupiedTable, setSelectedOccupiedTable] = useState(null);
 
@@ -80,6 +87,10 @@ export default function TablesPage() {
   // state is stored — mergeGroupId/isMerged/... are copied straight from the
   // API response and never reset to defaults, so a persisted merge always
   // survives refresh, navigation, logout/login and backend restarts.
+
+  // Background page scrolling is locked while one of this screen's dialogs is
+  // open (each dialog keeps its own internal scrolling).
+  useBodyScrollLock(showOpenTableModal || showOccupiedModal || mergeModalMode !== null);
 
   useEffect(() => {
     loadFloors();
@@ -209,29 +220,37 @@ export default function TablesPage() {
       setSelectedOccupiedTable(table);
       setShowOccupiedModal(true);
     } else if (table.status === 'Reserved' || table.status === 'Cleaning') {
+      // Existing business rules: reserved / cleaning tables are not openable.
       return;
     } else {
-      setActiveTableNumber(table.number);
-      setGuestCount(table.seats);
+      setOpenTableTarget(table);
+      setGuestCount(table.seats || 2);
       setShowOpenTableModal(true);
     }
   };
 
   const handleOpenTable = (e) => {
     e.preventDefault();
-    if (activeTableNumber === null) return;
-    // Mark the table as Occupied locally for visual feedback.
-    // Do NOT set a fake 'ord-{timestamp}' as activeOrderTakingId —
-    // the TakeOrderWizard will create a NEW order (no activeOrderTakingId)
-    // and the backend will assign the real database Order.id.
-    setTables(prev => prev.map(t => t.number === activeTableNumber
-      ? { ...t, status: 'Occupied', currentOrderId: null, guestsCount: guestCount, billAmount: 0 }
-      : t
-    ));
+    if (!openTableTarget || openingTableRef.current) return; // duplicate tap guard
+    openingTableRef.current = true;
+    setTimeout(() => { openingTableRef.current = false; }, 0);
+
+    // ── Open Table (Floors & Tables) → direct table ordering ──
+    // Hand the SELECTED table's real database id + display number to the
+    // order-entry wizard. The wizard opens straight on the menu with order
+    // type DINE_IN — no Dine In/Takeaway step and no floor/table re-selection
+    // (the user already chose the table). The backend remains authoritative:
+    // it validates the table belongs to this restaurant and is AVAILABLE, and
+    // it marks the table OCCUPIED only once the real order is created.
+    setActiveOrderTakingId(null); // hard reset — never edit a previously opened order
+    setPendingTable({
+      id: parseInt(String(openTableTarget.id).replace('t-', ''), 10),
+      tableNo: openTableTarget.tableNo || String(openTableTarget.number ?? ''),
+      name: openTableTarget.name || '',
+      seats: guestCount || openTableTarget.seats || 2,
+    });
     setShowOpenTableModal(false);
     setShowTakeOrderWizard(true);
-    // Do NOT call setActiveOrderTakingId — leave it null so the wizard
-    // operates in "new order" mode and never attempts GET /api/orders/{fakeId}
   };
 
   const handleChangeStatus = (tableId, newStatus) => {
@@ -866,28 +885,45 @@ export default function TablesPage() {
         )}
       </div>
 
-      {/* Open Table Modal */}
+      {/* Open Table Modal — viewport-bound (dvh), safe-area aware, internally
+          scrollable only when the content genuinely outgrows the screen. The
+          same sizing/positioning discipline as the POS Ordering surfaces. */}
       {showOpenTableModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
-          <div className="bg-white w-full max-w-xs rounded-xl shadow-xl border border-slate-100 p-5 space-y-4">
-            <h4 className="text-xs font-extrabold text-slate-800">Open Table {activeTableNumber}</h4>
+        <div
+          className="fixed inset-0 z-[95] flex items-center justify-center p-3 sm:p-4 pt-safe pb-safe px-safe bg-black/40 backdrop-blur-xs animate-fade-in"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Open table ${openTableTarget?.name || ''}`}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowOpenTableModal(false); }}
+        >
+          <div className="bg-white w-full max-w-xs max-h-[calc(100dvh-1.5rem)] sm:max-h-[85dvh] rounded-xl shadow-xl border border-slate-100 p-5 flex flex-col gap-4 overflow-y-auto overscroll-contain">
+            <h4 className="text-xs font-extrabold text-slate-800">
+              Open Table {openTableTarget?.name || openTableTarget?.tableNo || ''}
+            </h4>
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-slate-600">Guests</span>
                 <div className="flex items-center gap-2">
                   <button onClick={() => setGuestCount(p => Math.max(1, p - 1))}
-                    className="w-7 h-7 bg-slate-100 rounded-lg flex items-center justify-center hover:bg-slate-200 cursor-pointer">-</button>
+                    aria-label="Fewer guests"
+                    className="w-9 h-9 bg-slate-100 rounded-lg flex items-center justify-center hover:bg-slate-200 cursor-pointer">-</button>
                   <span className="w-8 text-center font-extrabold">{guestCount}</span>
                   <button onClick={() => setGuestCount(p => p + 1)}
-                    className="w-7 h-7 bg-slate-100 rounded-lg flex items-center justify-center hover:bg-slate-200 cursor-pointer">+</button>
+                    aria-label="More guests"
+                    className="w-9 h-9 bg-slate-100 rounded-lg flex items-center justify-center hover:bg-slate-200 cursor-pointer">+</button>
                 </div>
               </div>
+              {/* The table is already chosen — order type is DINE_IN and the
+                  menu opens for this table directly (no Dine In/Takeaway step). */}
+              <p className="text-[10px] text-slate-400 border-t border-slate-100 pt-2.5">
+                Opens this table&apos;s order directly on the menu (Dine In).
+              </p>
             </div>
-            <div className="flex gap-2 pt-2">
+            <div className="flex gap-2 pt-1">
               <button onClick={() => setShowOpenTableModal(false)}
-                className="flex-1 h-9 border border-slate-200 rounded-lg text-xs font-bold text-slate-500 cursor-pointer">Cancel</button>
-              <button onClick={handleOpenTable}
-                className="flex-[2] h-9 bg-[#16A34A] text-white rounded-lg text-xs font-bold cursor-pointer">Open Table</button>
+                className="flex-1 h-10 border border-slate-200 rounded-lg text-xs font-bold text-slate-500 cursor-pointer hover:bg-slate-50">Cancel</button>
+              <button onClick={handleOpenTable} disabled={openingTableRef.current}
+                className="flex-[2] h-10 bg-[#16A34A] text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-[#15803D] disabled:opacity-60">Open Table</button>
             </div>
           </div>
         </div>
@@ -921,8 +957,8 @@ export default function TablesPage() {
 
       {/* Occupied Table Modal */}
       {showOccupiedModal && selectedOccupiedTable && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
-          <div className="bg-white w-full max-w-xs rounded-xl shadow-xl border border-slate-100 p-5 space-y-4">
+        <div className="fixed inset-0 z-[95] flex items-center justify-center p-3 sm:p-4 pt-safe pb-safe px-safe bg-black/40 backdrop-blur-xs animate-fade-in">
+          <div className="bg-white w-full max-w-xs max-h-[calc(100dvh-1.5rem)] sm:max-h-[85dvh] rounded-xl shadow-xl border border-slate-100 p-5 flex flex-col gap-4 overflow-y-auto overscroll-contain">
             <h4 className="text-xs font-extrabold text-slate-800">{selectedOccupiedTable.name}</h4>
             <div className="text-xs text-slate-500 space-y-1">
               <p><span className="font-bold">Status:</span> Occupied</p>

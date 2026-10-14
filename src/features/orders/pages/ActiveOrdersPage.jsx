@@ -140,6 +140,13 @@ export default function ActiveOrdersPage() {
   // KOT button loading per order (double-click protection)
   const [kotLoading, setKotLoading] = useState(null);
 
+  // Synchronous re-entrancy guards for the hold/resume transitions. React state
+  // is async, so a rapid double-tap could otherwise fire the endpoint twice.
+  // The backend is idempotent (hold→hold and resume→resume are rejected without
+  // side effects), but the UI must never even send the duplicate request.
+  const holdBusyRef = useRef(false);
+  const resumeBusyRef = useRef(false);
+
   // ── Preview state (Part: Active Order Preview) ──
   // previewOrder = the order currently shown in the preview modal; fetched via
   // the EXISTING tenant-scoped GET /orders/:id endpoint (real DB data only —
@@ -551,6 +558,8 @@ export default function ActiveOrdersPage() {
       addToast('Hold orders is disabled in POS Settings', 'warning');
       return;
     }
+    if (holdBusyRef.current) return; // duplicate tap / retry guard
+    holdBusyRef.current = true;
     setHoldLoading(order.id);
     try {
       await orderApi.hold(order.id);
@@ -559,6 +568,7 @@ export default function ActiveOrdersPage() {
     } catch (e) {
       addToast(e?.response?.data?.message || 'Failed to hold order', 'error');
     } finally {
+      holdBusyRef.current = false;
       setHoldLoading(null);
     }
   };
@@ -566,9 +576,13 @@ export default function ActiveOrdersPage() {
   // ── Held Orders Handlers ──
 
   const handleResumeHold = async (orderId) => {
+    if (resumeBusyRef.current) return; // duplicate tap / retry guard
+    resumeBusyRef.current = true;
     setActionLoading(orderId);
     try {
       const backendId = parseInt(orderId.toString());
+      // Resume only clears the hold flag: the ORIGINAL order id, its table and
+      // its existing KOT(s) are reused. No new order and no new KOT is created.
       const resp = await orderApi.resume(backendId);
       if (resp.success) {
         addToast('Order resumed. You can now modify it.', 'success');
@@ -582,6 +596,7 @@ export default function ActiveOrdersPage() {
     } catch (e) {
       addToast(e.message || 'Failed to resume order', 'error');
     } finally {
+      resumeBusyRef.current = false;
       setActionLoading(null);
     }
   };

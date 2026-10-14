@@ -82,6 +82,16 @@ export default function Sidebar() {
   const capabilities = settings?.capabilities || getBusinessCapabilities(settings?.businessType);
   const catalogLabel = catalogNaming(settings?.businessType).catalogLabel;
 
+  // Restaurant branding for the sidebar header. Both values come from the
+  // CURRENT tenant's settings fetch (the store rebuilds its baseline on every
+  // fetch, so another restaurant's name/logo can never leak in).
+  //  - restaurantName: the tenant's display name.
+  //  - tenantLogo: ONLY a logo this tenant uploaded. When none is configured
+  //    (or the image fails to load) AppLogo falls back to the restaurant's
+  //    initial — never the platform's generic mark or a broken image.
+  const restaurantName = settings?.branding?.restaurantName || 'POS';
+  const tenantLogo = settings?.branding?.customLogo || '';
+
   // §12: Active Orders is visible for RESTAURANT (always) and for a BASIC_POS
   // food business in PRODUCTION mode (Quick Billing OFF). It is hidden when
   // Quick Billing is ON (no production workflow) and never shown for
@@ -222,14 +232,13 @@ export default function Sidebar() {
           <div className="space-y-4 min-h-0">
             {/* Logo & Close */}
             <div className="px-3 flex items-center justify-between gap-2 h-10">
-              <div className="flex items-center gap-2 min-w-0">
-                <AppLogo
-                  src={settings.branding.sidebarLogo}
-                  name={settings.branding.restaurantName || 'POS'}
-                  size="sm"
-                />
-                <span className="font-extrabold text-xs text-white tracking-tight truncate uppercase leading-none">
-                  {settings.branding.restaurantName || 'POS'}
+              <div className="flex items-center gap-2 min-w-0 flex-1">
+                <AppLogo src={tenantLogo} name={restaurantName} size="sm" />
+                <span
+                  className="font-extrabold text-xs text-white tracking-tight truncate uppercase leading-none"
+                  title={restaurantName}
+                >
+                  {restaurantName}
                 </span>
               </div>
               <button
@@ -276,15 +285,16 @@ export default function Sidebar() {
       <div className="space-y-4">
         {/* Logo & Collapse */}
         <div className="px-3 flex items-center justify-between gap-2 overflow-hidden h-10">
-          <div className="flex items-center gap-2 min-w-0">
-            <AppLogo
-              src={settings.branding.sidebarLogo}
-              name={settings.branding.restaurantName || 'POS'}
-              size="sm"
-            />
+          {/* The mark is always rendered (rail + expanded) and never shrinks;
+              the name only appears in the expanded desktop layout. */}
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <AppLogo src={tenantLogo} name={restaurantName} size="sm" />
             {!sidebarCollapsed && (
-              <span className="hidden xl:block font-extrabold text-xs text-white tracking-tight truncate uppercase leading-none">
-                {settings.branding.restaurantName || 'POS'}
+              <span
+                className="hidden xl:block min-w-0 truncate font-extrabold text-xs text-white tracking-tight uppercase leading-none"
+                title={restaurantName}
+              >
+                {restaurantName}
               </span>
             )}
           </div>

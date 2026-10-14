@@ -20,6 +20,7 @@ import { floorApi } from '../../../../api/floor.api';
 import { openKotPrintPreview } from '../../../../services/printService';
 import { PLACEHOLDER_IMAGE } from '../../../../lib/imagePlaceholder';
 import { canHandleBilling } from '../../../../utils/permissions';
+import { useBodyScrollLock } from '../../../../hooks/useBodyScrollLock';
 import {
   SUBCATEGORY_ALL,
   subcategoryTabsFor,
@@ -84,7 +85,7 @@ function ConfirmDialog({ open, title, message, confirmLabel, confirmVariant, onC
 
 // ── Main Wizard Component ───────────────────────────────────────────────────
 export default function TakeOrderWizard({ mode = 'modal' } = {}) {
-  const { showTakeOrderWizard, setShowTakeOrderWizard, setScreen, addToast, activeOrderTakingId, setActiveOrderTakingId, setOrdersActiveTab, currentScreen, incrementRefreshTrigger, setCheckoutOrderId } = useUiStore();
+  const { showTakeOrderWizard, setShowTakeOrderWizard, setScreen, addToast, activeOrderTakingId, setActiveOrderTakingId, setOrdersActiveTab, currentScreen, incrementRefreshTrigger, setCheckoutOrderId, pendingTable, clearPendingTable } = useUiStore();
   const { addOrder } = useCartStore();
   const { settings } = useSettingsStore();
   // Dietary indicators only for food verticals (§10) — retail fallback shows a
@@ -202,6 +203,13 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
   // ReferenceError ("Cannot access 'isEditing' before initialization").
   const isEditing = !!activeOrderTakingId && !!editingOrder;
 
+  // ── Open Table hand-off (Floors & Tables → direct table ordering) ──
+  // The Floors & Tables screen hands over the table the user tapped. A brand
+  // new order for that table opens directly on the Menu with order type
+  // DINE_IN: no Dine In/Take Away step, no floor/table re-selection. The order
+  // id is what makes this an EDIT session, so the hand-off is ignored then.
+  const isOpenTableFlow = !!pendingTable && !activeOrderTakingId;
+
   // ── Shared order-type resolution (Part 8) ──
   // Order type must be resolved BEFORE unnecessary steps render — no component
   // that depends on floor/table state mounts while orderType is still unknown.
@@ -300,7 +308,7 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
       // Load every dataset independently — each loader already isolates its own
       // errors, and Promise.allSettled guarantees an optional failure (waiters,
       // customers, floors…) can never abort menu/table/order initialization.
-      await Promise.allSettled([
+      const settled = await Promise.allSettled([
         loadMenu(),
         loadCategories(),
         loadSubcategories(), // once per wizard open — tabs derive locally, no refetch per click (Part 2 req. 2)
@@ -309,6 +317,32 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
         // Waiter/customer lists no longer loaded: no selection UI exists in
         // the New Order flow (staff = logged-in user, customer = Walk-in).
       ]);
+      const loadedTables = settled[3]?.status === 'fulfilled' ? (settled[3].value || []) : [];
+
+      // ── Open Table hand-off ──
+      // The tapped table is re-resolved from the tenant-scoped tables API (the
+      // hand-off payload is never trusted as-is) and validated before the
+      // order-entry screen is shown. Occupied / Reserved / Cleaning / deleted
+      // tables follow the existing business rules and abort with a message.
+      if (isOpenTableFlow) {
+        const match = loadedTables.find((t) => t.id === `t-${pendingTable.id}`);
+        if (!match) {
+          addToast('That table is no longer available. Please pick another table.', 'error');
+          clearPendingTable();
+          if (!isPageMode) setShowTakeOrderWizard(false);
+          return;
+        }
+        if (match.status !== 'Available') {
+          addToast(`Table ${pendingTable.tableNo || match.number} is ${String(match.status).toLowerCase()} — it cannot be opened.`, 'error');
+          clearPendingTable();
+          setSelectedTable(null);
+          if (!isPageMode) setShowTakeOrderWizard(false);
+          return;
+        }
+        setSelectedTable(match);
+        setGuestCount(pendingTable.seats || match.seats || 2);
+        setCurrentStep(3);
+      }
       // If editing existing order, load it and pre-populate
       if (activeOrderTakingId) {
         try {
@@ -366,10 +400,13 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
   };
 
   const resetWizard = () => {
-    setCurrentStep(0);
+    // Open Table: start directly on the Menu (step 3) with DINE_IN already
+    // resolved — the table/order-type steps are never rendered for this flow.
+    const openTableFlow = !!pendingTable && !activeOrderTakingId;
+    setCurrentStep(openTableFlow ? 3 : 0);
     setEditingOrder(null);
     setEditExistingItems([]);
-    setOrderType(null);
+    setOrderType(openTableFlow ? 'dine_in' : null);
     setSelectedFloor(null);
     setSelectedTable(null);
     setSelectedCat('All');
@@ -443,6 +480,9 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
     }
   };
 
+  // Returns the mapped, tenant-scoped table list so callers (the Open Table
+  // hand-off) can validate the tapped table against the AUTHORITATIVE API data
+  // before any order is created.
   const loadTables = async () => {
     setTableLoading(true);
     try {
@@ -461,8 +501,10 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
         floorId: t.floorId ? `floor-${t.floorId}` : null,
       }));
       setTables(mapped);
+      return mapped;
     } catch (e) {
       console.error('Failed to load tables:', e);
+      return [];
     } finally {
       setTableLoading(false);
     }
@@ -648,6 +690,7 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
         incrementRefreshTrigger();
         addToast(`Order ${orderData.orderNo || orderData.id} placed on hold.`, 'success');
         setActionSuccess('hold');
+        clearPendingTable(); // hand-off consumed — the table now has a real order
         setShowTakeOrderWizard(false);
         const prevScreen = previousScreenRef.current;
         if (prevScreen && prevScreen !== 'order_taking') setScreen(prevScreen);
@@ -749,7 +792,9 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
       // (Order Type) by reusing its own open routine (resetWizard clears the
       // completed cart/order-type/floor/table state, then data reloads). The
       // created order/KOT are untouched: no payment opens, no second order
-      // and no second KOT are created.
+      // and no second KOT are created. The Open Table hand-off is consumed
+      // here so the restart begins at the normal first step.
+      clearPendingTable();
       await loadInitialData();
     } catch (e) {
       const msg = e?.response?.data?.message || e?.message || 'Failed to create order';
@@ -763,6 +808,14 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
   // ── Action: Save & Pay (Save Order → Navigate to Payment Screen) ──────────
   const handleSaveAndPay = async () => {
     if (cart.length === 0) return;
+    // An already-created order (Add Item / resumed held order / any edit
+    // session) must NEVER be re-created here — creating a second order would
+    // also create a second KOT for the same items. Editing goes through
+    // Update Order, which adds only the new items to the ORIGINAL order.
+    if (activeOrderTakingId || isEditing) {
+      addToast('This order already exists — use Update Order to add items.', 'warning');
+      return;
+    }
     if (submittingRef.current) return; // double-tap guard
     submittingRef.current = true;
     setSubmitting('bill');
@@ -799,6 +852,7 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
 
         incrementRefreshTrigger();
         setActionSuccess('bill');
+        clearPendingTable(); // hand-off consumed — the table now has a real order
         if (canBill) {
           // Billing-capable roles continue straight into the payment overlay
           setCheckoutOrderId(orderData.id);
@@ -820,6 +874,10 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
 
   // ── Action: Cancel ─────────────────────────────────────────────────────────
   const handleCancelOrder = () => {
+    // Discard the whole entry context — a pending table hand-off or a stale
+    // edit-order id must never leak into the next wizard session.
+    clearPendingTable();
+    setActiveOrderTakingId(null);
     setShowTakeOrderWizard(false);
     const prevScreen = previousScreenRef.current;
     if (prevScreen && prevScreen !== 'order_taking') setScreen(prevScreen);
@@ -921,6 +979,12 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
 
   // ── Close Handler ──
   const handleClose = () => {
+    // One cleanup point for EVERY close path: the pending Open Table hand-off
+    // and any edit-order id are dropped so the next wizard session starts from
+    // its own flow (a stale order id used to silently turn a new order into an
+    // edit of a previously resumed order → duplicate items + duplicate KOT).
+    clearPendingTable();
+    setActiveOrderTakingId(null);
     setShowTakeOrderWizard(false);
     if (isPageMode) {
       setScreen('dashboard');
@@ -932,7 +996,10 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
 
   // ── Navigation ──
   const goNext = () => { if (currentStep < maxStep) setCurrentStep(s => s + 1); };
-  const goBack = () => { if (currentStep > 0) setCurrentStep(s => s - 1); };
+  // Open Table already resolved the order type and the table, so there is no
+  // previous step to return to on the Menu screen — Back only leaves Review.
+  const canGoBack = currentStep > 0 && !(isOpenTableFlow && currentStep <= 3);
+  const goBack = () => { if (canGoBack) setCurrentStep(s => s - 1); };
 
   // ── Filtered Data ──
   // Part 11: a category holding zero visible items (e.g. all non-veg hidden
@@ -980,17 +1047,23 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
   // When floor management is disabled, skip floor/table steps
   // For dine-in with floor mgmt disabled: currentStep 0→1→2→3→4 but display only 3 steps
   // For takeaway: currentStep 0→1→2, all mapped 1:1
+  // Open Table: order type + table came from the Floors & Tables screen, so the
+  // indicator starts at Menu (the wizard's fixed steps 0–2 are skipped).
   const activeSteps = isTakeaway
     ? ['Order Type', 'Menu', 'Review']
-    : skipFloorMgmt
-      ? STEP_LABELS.filter((_, i) => i !== 1 && i !== 2)
-      : STEP_LABELS;
+    : isOpenTableFlow
+      ? ['Menu', 'Review']
+      : skipFloorMgmt
+        ? STEP_LABELS.filter((_, i) => i !== 1 && i !== 2)
+        : STEP_LABELS;
 
   const stepMap = isTakeaway
     ? { 0: 0, 1: 1, 2: 2 }
-    : skipFloorMgmt
-      ? { 0: 0, 1: 0, 2: 0, 3: 1, 4: 2 }
-      : { 0: 0, 1: 1, 2: 2, 3: 3, 4: 4 };
+    : isOpenTableFlow
+      ? { 3: 0, 4: 1 }
+      : skipFloorMgmt
+        ? { 0: 0, 1: 0, 2: 0, 3: 1, 4: 2 }
+        : { 0: 0, 1: 1, 2: 2, 3: 3, 4: 4 };
 
   const displayStep = stepMap[currentStep] || 0;
 
@@ -1071,7 +1144,7 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
 
   // ── Render: Step 1 (Dine In) - Floor ──
   const renderFloor = () => (
-    <div className="flex-1 p-6 overflow-y-auto">
+    <div className="flex-1 p-6 overflow-y-auto overscroll-contain">
       <h3 className="text-sm font-extrabold text-slate-800 mb-1">Select Floor / Area</h3>
       <p className="text-[10px] text-slate-400 mb-4">Choose the floor where the customer is seated</p>
       {floorLoading ? (
@@ -1149,7 +1222,7 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
 
   // ── Render: Step 2 (Dine In) - Table ──
   const renderTable = () => (
-    <div className="flex-1 p-6 overflow-y-auto">
+    <div className="flex-1 p-6 overflow-y-auto overscroll-contain">
       <div className="flex items-center justify-between mb-4">
         <div>
           <h3 className="text-sm font-extrabold text-slate-800">Select Table</h3>
@@ -1216,7 +1289,7 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
 
   // ── Menu Step (Shared) ──
   const renderMenu = () => (
-    <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="flex-1 flex flex-col overflow-hidden min-h-0">
       {/* Inline barcode input removed (spec §13): the wizard never shows a
           scanner interface. With the scanner ON, the Basic POS workspace's
           dedicated Counter Scan screen is the single scanning UI. */}
@@ -1293,7 +1366,7 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
       )}
 
       {/* Items grid — large POS-style cards */}
-      <div className="flex-1 overflow-y-auto p-3">
+      <div className="flex-1 overflow-y-auto overscroll-contain p-3">
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
           {filteredItems.map(item => {
             const inCart = cart.find(c => c.itemId === item.id);
@@ -1398,8 +1471,8 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
 
   // ── Render: Review / Actions ──
   const renderReview = () => (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+    <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+      <div className="flex-1 overflow-y-auto overscroll-contain p-4 space-y-3">
         <h3 className="text-sm font-extrabold text-slate-800">Review Order</h3>
         <p className="text-[10px] text-slate-400">
           {isTakeaway ? 'Take Away' : `Table: ${selectedTable?.name || '-'}${acNonAcPricing && selectedTable ? ` (${selectedTable.floorType === 'AC' ? 'AC' : 'Non-AC'})` : ''} · ${guestCount} guest(s)`} · {cart.reduce((s, c) => s + c.qty, 0)} items
@@ -1519,8 +1592,11 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
             {/* Save & Pay */}
             </>
             )}
-            {/* Save & Pay - hidden if billing module disabled or for non-billing roles (WAITER/KITCHEN) */}
-            {settings.enableBilling !== false && canBill && (
+            {/* Save & Pay - only for a NEW order: hidden when editing/resuming
+                (the order exists — Update Order adds to it) so a resumed held
+                order can never spawn a second order + duplicate KOT. Also
+                hidden if the billing module is disabled or the role cannot bill. */}
+            {!isEditing && settings.enableBilling !== false && canBill && (
             <button onClick={handleSaveAndPay} disabled={submitting !== null}
               className="p-3 border-2 border-emerald-200 rounded-2xl hover:border-[#16A34A] hover:bg-emerald-50 transition-all text-center cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
               <DollarSign className="w-5 h-5 text-emerald-600 mx-auto mb-1" />
@@ -1570,6 +1646,11 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
   );
 
   // ── Main Render ──
+  // The wizard's modal overlay is the only modal mount point for a table's
+  // order entry; background scrolling is locked while it is open (its own
+  // scrolling areas keep working).
+  useBodyScrollLock(!isPageMode && showTakeOrderWizard);
+
   if (!isPageMode && !showTakeOrderWizard) return null;
 
   // Show loading spinner while initial data loads (placed after ALL hooks)
@@ -1610,7 +1691,19 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
             )}
             <h2 className="text-xs font-extrabold text-slate-800 uppercase tracking-wider">{isEditing ? `Edit Order #${editingOrder.orderNo || editingOrder.id}` : 'New Order'}</h2>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            {/* The table this order belongs to — always visible while ordering
+                so a wrong table can never be mistaken for the right one
+                (Floors & Tables → Open Table carries the exact table here). */}
+            {selectedTable && !isTakeaway && (
+              <span
+                className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded-lg text-[9px] font-bold flex items-center gap-1 max-w-[9rem]"
+                title={selectedTable.name}
+              >
+                <Users className="w-3 h-3 shrink-0" />
+                <span className="truncate">{selectedTable.name}</span>
+              </span>
+            )}
             {cart.length > 0 && (
               <span className="bg-[#16A34A]/10 text-[#16A34A] px-2 py-0.5 rounded-lg text-[9px] font-bold flex items-center gap-1">
                 <ShoppingCart className="w-3 h-3" /> {cart.length}
@@ -1653,7 +1746,7 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
             single selection to advance on. Back is unchanged on every step. */}
         {!actionSuccess && (
           <div className="flex items-center justify-between px-3 sm:px-4 py-2.5 border-t border-slate-200 bg-slate-50 shrink-0">
-            <button onClick={goBack} disabled={currentStep === 0}
+            <button onClick={goBack} disabled={!canGoBack}
               className="h-9 px-3 bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 font-bold rounded-xl text-[10px] sm:text-xs flex items-center gap-1.5 transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer shadow-sm">
               <ArrowLeft className="w-3.5 h-3.5" /> Back
             </button>
@@ -1712,8 +1805,13 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in">
       {/* Full-bleed on phones; inset rounded card from sm up (portrait tablets
-          get the same card at a comfortable width without touching screen edges) */}
-      <div className="bg-white w-full h-full sm:h-[95vh] sm:max-w-4xl sm:rounded-2xl sm:shadow-2xl sm:mx-4 flex flex-col overflow-hidden">
+          get the same card at a comfortable width without touching screen edges).
+          DYNAMIC viewport units (dvh) keep the card inside the VISIBLE viewport
+          on mobile browsers whose toolbar changes the viewport height, and the
+          safe-area padding keeps the header/footer clear of notches and
+          gesture bars. The card has a definite height, so the step content and
+          item list scroll INSIDE it (the page behind never scrolls). */}
+      <div className="bg-white w-full h-[100dvh] sm:h-[95dvh] sm:max-w-4xl sm:rounded-2xl sm:shadow-2xl sm:mx-4 flex flex-col overflow-hidden pt-safe pb-safe sm:pt-0 sm:pb-0">
         {wizardContent}
       </div>
     </div>

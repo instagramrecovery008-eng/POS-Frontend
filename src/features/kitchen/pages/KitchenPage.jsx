@@ -1,16 +1,13 @@
 import React, { useState, useCallback } from 'react';
-import { useUiStore, useAuthStore } from '../../../store';
-import { Search, Clock, Users, Check, Ban, RefreshCw, Loader2 } from 'lucide-react';
+import { Search, Clock, Check, Ban, RefreshCw, Loader2 } from 'lucide-react';
 import kotApi from '../../../api/kot.api';
 import { useSocketEvent } from '../../../hooks/useSocket';
-import { canHandleBilling } from '../../../utils/permissions';
+import { groupKotsByTab } from '../../../utils/kotTabs';
 
+// The Kitchen Tickets screen is the PRODUCTION surface only: it shows tickets
+// and their kitchen status. Checkout/billing lives exclusively on the
+// cashier/POS screens (Active Orders + Billing) — no payment navigation here.
 export default function KitchenPage() {
-  const { setScreen, setCheckoutOrderId } = useUiStore();
-  const { user } = useAuthStore();
-  // Checkout Desk is a billing/payment workflow action — only billing-capable
-  // roles (ADMIN/MANAGER/CASHIER) may open it. KITCHEN and WAITER never see it.
-  const canBill = canHandleBilling(user?.role);
 
   const [kots, setKots] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -65,6 +62,13 @@ export default function KitchenPage() {
     },
   });
 
+  // Hold / resume / accept / complete all emit `order:updated` — refetch so the
+  // Active ↔ On Hold ↔ History split reflects the stored order status instead
+  // of stale list state.
+  useSocketEvent({
+    event: 'order:updated',
+    handler: () => { fetchKots(); },
+  });
   useSocketEvent({
     event: 'order:cancelled',
     handler: () => { fetchKots(); },
@@ -78,16 +82,14 @@ export default function KitchenPage() {
     handler: () => { fetchKots(); },
   });
 
-  // Determine which orders are active vs history based on KOT status
-  const activeKots = kots.filter(k =>
-    k.status !== 'CANCELLED' && k.status !== 'SERVED'
-  );
-  const holdKots = kots.filter(k =>
-    k.status !== 'CANCELLED' && k.order?.status === 'HOLD'
-  );
-  const historyKots = kots.filter(k =>
-    k.status === 'CANCELLED' || k.status === 'SERVED'
-  );
+  // ── Ticket state — ONE source of truth per KOT ──
+  // Mutually exclusive buckets derived from the STORED KOT + order status
+  // (utils/kotTabs.js): a held ticket can never be Active and On Hold at the
+  // same time, and a finished/voided ticket never shows as Active.
+  const kotTabs = groupKotsByTab(kots);
+  const activeKots = kotTabs.Active;
+  const holdKots = kotTabs['On Hold'];
+  const historyKots = kotTabs.History;
 
   const getFilteredKots = () => {
     switch (activeTab) {
@@ -208,7 +210,7 @@ export default function KitchenPage() {
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              {tab} ({tab === 'Active' ? activeKots.length : tab === 'On Hold' ? holdKots.length : historyKots.length})
+              {tab} ({kotTabs[tab].length})
             </button>
           ))}
         </div>
@@ -358,14 +360,6 @@ export default function KitchenPage() {
                     {busyAction === 'void' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
                     {busyAction === 'void' ? 'Voiding...' : 'Void Ticket'}
                   </button>
-                  {canBill && (
-                    <button
-                      onClick={() => { setCheckoutOrderId(selectedKot.orderId); }}
-                      className="h-10 px-3 text-[10px] font-bold bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-lg uppercase tracking-wider flex items-center gap-1 transition-all cursor-pointer"
-                    >
-                      Checkout Desk
-                    </button>
-                  )}
                 </div>
                 <div>
                   {getNextStatus(selectedKot.status) && (

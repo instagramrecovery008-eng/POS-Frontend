@@ -90,6 +90,18 @@ const useUiStore = create((set) => ({
   showTakeOrderWizard: false,
   setShowTakeOrderWizard: (show) => set({ showTakeOrderWizard: show }),
 
+  // ── Open Table (Floors & Tables → order entry) ──
+  // The table the user tapped is carried EXPLICITLY as its real database id
+  // (plus its display number) so the order-entry wizard opens straight on the
+  // menu for THAT table — never re-asking order type / floor / table. Only the
+  // id and display fields are stored; the wizard still re-loads the table from
+  // the tenant-scoped API and re-validates it before opening an order.
+  // Set only by the Floors & Tables screen; cleared when the wizard closes so
+  // no stale table can leak into a later POS Ordering session.
+  pendingTable: null,
+  setPendingTable: (table) => set({ pendingTable: table || null }),
+  clearPendingTable: () => set({ pendingTable: null }),
+
   // Refresh trigger — increment after any order action to sync screens
   refreshTrigger: 0,
   incrementRefreshTrigger: () => set((state) => ({ refreshTrigger: state.refreshTrigger + 1 })),

@@ -307,16 +307,22 @@ export default function AppShell() {
   // POS account. Onboarding applicants (restaurant not ACTIVE yet) must never
   // call POS-protected endpoints, so they are skipped here — their settings
   // load on “Enter KlarGo POS” after activation.
-  const autoSettingsFetchedRef = useRef(false);
+  // The restaurant settings snapshot (branding, modules, capabilities) belongs
+  // to ONE account. Tracking the account it was loaded for means a logout/login
+  // switch — or a different user in the same browser — always reloads from the
+  // server instead of rendering the previous tenant's name/logo. The short TTL
+  // still avoids redundant refetches for the same account.
+  const settingsLoadedForUserRef = useRef(null);
+  const settingsUserId = user?.id ?? user?.email ?? null;
   useEffect(() => {
-    if (!sessionReady || !isAuthenticated || !user) return;
+    if (!sessionReady || !isAuthenticated || !user || !settingsUserId) return;
     if (isSelfServeOnboarding(onboarding)) return;
-    if (autoSettingsFetchedRef.current) return;
-    autoSettingsFetchedRef.current = true;
-    if (!lastFetched || Date.now() - lastFetched > 60000) {
+    const switchedUser = settingsLoadedForUserRef.current !== settingsUserId;
+    settingsLoadedForUserRef.current = settingsUserId;
+    if (switchedUser || !lastFetched || Date.now() - lastFetched > 60000) {
       fetchSettings();
     }
-  }, [sessionReady, isAuthenticated, user, onboarding, lastFetched, fetchSettings]);
+  }, [sessionReady, isAuthenticated, user, settingsUserId, onboarding, lastFetched, fetchSettings]);
 
   // ── After session restored, redirect to the user's home screen if still on login ──
   // Self-serve applicants whose restaurant is not ACTIVE yet go into the
