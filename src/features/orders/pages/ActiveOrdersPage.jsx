@@ -3,7 +3,7 @@ import { useUiStore, useCartStore, useSettingsStore, useAuthStore } from '../../
 import { 
   Clock, Users, Search, Ban, RefreshCw, Loader2, X, AlertTriangle, 
   Plus, Printer, CreditCard, ArrowRight, UtensilsCrossed, 
-  Coffee, CheckCircle2, RotateCcw, DollarSign, Trash2, ChefHat,
+  CheckCircle2, ChefHat,
   Eye, Play, SplitSquareVertical, Building2, ReceiptText
 } from 'lucide-react';
 import orderApi from '../../../api/order.api';
@@ -21,7 +21,9 @@ const STATUS_STYLES = {
   PREPARING: { bg: 'bg-blue-50 border-blue-200', text: 'text-blue-700', dot: 'bg-blue-400', label: 'Preparing' },
   READY: { bg: 'bg-emerald-50 border-emerald-200', text: 'text-emerald-700', dot: 'bg-emerald-400', label: 'Ready' },
   SERVED: { bg: 'bg-purple-50 border-purple-200', text: 'text-purple-700', dot: 'bg-purple-400', label: 'Served' },
-  HOLD: { bg: 'bg-amber-50 border-amber-200', text: 'text-amber-700', dot: 'bg-amber-400', label: 'On Hold' },
+  // Defensive only: legacy held rows (created before hold was removed) render
+  // as a normal open ticket. Their KOTs are never re-issued by this screen.
+  HOLD: { bg: 'bg-amber-50 border-amber-200', text: 'text-amber-700', dot: 'bg-amber-400', label: 'Pending' },
   COMPLETED: { bg: 'bg-green-50 border-green-200', text: 'text-green-700', dot: 'bg-green-400', label: 'Completed' },
   CANCELLED: { bg: 'bg-red-50 border-red-200', text: 'text-red-700', dot: 'bg-red-400', label: 'Cancelled' },
 };
@@ -122,30 +124,14 @@ export default function ActiveOrdersPage() {
   const [cancellingOrderId, setCancellingOrderId] = useState(null);
   const [cancelSubmitting, setCancelSubmitting] = useState(false);
 
-  // Held orders state (for Hold tab)
-  const [heldOrders, setHeldOrders] = useState([]);
-  const [heldLoading, setHeldLoading] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(null);
-  const [actionLoading, setActionLoading] = useState(null);
-
   // Transfer table state
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [transferringOrder, setTransferringOrder] = useState(null);
   const [availableTables, setAvailableTables] = useState([]);
   const [tablesLoading, setTablesLoading] = useState(false);
 
-  // Hold button loading per order
-  const [holdLoading, setHoldLoading] = useState(null);
-
   // KOT button loading per order (double-click protection)
   const [kotLoading, setKotLoading] = useState(null);
-
-  // Synchronous re-entrancy guards for the hold/resume transitions. React state
-  // is async, so a rapid double-tap could otherwise fire the endpoint twice.
-  // The backend is idempotent (hold→hold and resume→resume are rejected without
-  // side effects), but the UI must never even send the duplicate request.
-  const holdBusyRef = useRef(false);
-  const resumeBusyRef = useRef(false);
 
   // ── Preview state (Part: Active Order Preview) ──
   // previewOrder = the order currently shown in the preview modal; fetched via
@@ -202,33 +188,29 @@ export default function ActiveOrdersPage() {
     }
   }, [setOrders]);
 
-  // ── Fetch Held + Completed + Cancelled Orders (Single consolidated call) ──
-  const fetchHeldAndCompleted = useCallback(async () => {
-    setHeldLoading(true);
+  // ── Fetch Completed + Cancelled Orders (Single consolidated call) ──
+  const fetchCompletedAndCancelled = useCallback(async () => {
     try {
       const resp = await orderApi.getAll();
       const allOrders = extractOrders(resp);
-      setHeldOrders(allOrders.filter(o => o.status === 'HOLD'));
       setCompletedOrders(allOrders.filter(o => o.status === 'COMPLETED'));
       setCancelledOrders(allOrders.filter(o => o.status === 'CANCELLED'));
     } catch (e) {
-      console.error('Failed to fetch held/completed/cancelled orders:', e);
-    } finally {
-      setHeldLoading(false);
+      console.error('Failed to fetch completed/cancelled orders:', e);
     }
   }, []);
 
   // ── Initial Load ──
   useEffect(() => {
     fetchActiveOrders();
-    fetchHeldAndCompleted();
+    fetchCompletedAndCancelled();
   }, []);
 
   // Re-fetch when data changes (triggered by TakeOrderWizard)
   useEffect(() => {
     if (refreshTrigger > 0) {
       fetchActiveOrders();
-      fetchHeldAndCompleted();
+      fetchCompletedAndCancelled();
     }
   }, [refreshTrigger]);
 
@@ -253,9 +235,13 @@ export default function ActiveOrdersPage() {
     setLoading(false);
   }});
 
-  // ── Filter active orders (exclude HOLD, COMPLETED, CANCELLED) ──
+  // ── Filter active orders (exclude COMPLETED, CANCELLED) ──
+  // A legacy HOLD row (created before hold orders were removed) is an OPEN
+  // ticket with a live KOT, so it stays visible here instead of silently
+  // disappearing. It is a read-only status legacy: nothing on this screen can
+  // set HOLD, and no KOT is created by rendering it.
   const activeOrders = (orders || []).filter(o => {
-    if (o.status === 'HOLD' || o.status === 'COMPLETED' || o.status === 'CANCELLED') return false;
+    if (o.status === 'COMPLETED' || o.status === 'CANCELLED') return false;
     const q = searchQuery.toLowerCase();
     const matchesSearch = !q || (o.orderNo || '').toLowerCase().includes(q) ||
       (o.table?.tableNo || '').toString().toLowerCase().includes(q) ||
@@ -273,15 +259,6 @@ export default function ActiveOrdersPage() {
       (o.customer?.name || '').toLowerCase().includes(q);
     const matchesType = typeFilter === 'All' || (o.orderType || '') === typeFilter;
     return matchesSearch && matchesType;
-  });
-
-  // ── Filter held orders ──
-  const filteredHeld = heldOrders.filter(o => {
-    const q = searchQuery.toLowerCase();
-    return !q || (o.orderNo || '').toString().toLowerCase().includes(q) ||
-      (o.table?.tableNo || '').toString().toLowerCase().includes(q) ||
-      (o.customer?.name || '').toLowerCase().includes(q) ||
-      (o.user?.name || '').toLowerCase().includes(q);
   });
 
   // ── Filter cancelled orders ──
@@ -465,7 +442,7 @@ export default function ActiveOrdersPage() {
         try { await tableApi.updateStatus(tableId, 'AVAILABLE'); } catch {}
       }
       addToast(`Order cancelled successfully`, 'success');
-      incrementRefreshTrigger(); // triggers refreshTrigger useEffect (fetches active, held, completed)
+      incrementRefreshTrigger(); // triggers refreshTrigger useEffect (fetches active, completed, cancelled)
     } catch (e) {
       addToast('Failed to cancel order', 'error');
     }
@@ -485,7 +462,7 @@ export default function ActiveOrdersPage() {
       await orderApi.splitOrders(mergeGroupId);
       addToast("Tables split successfully", "success");
       fetchActiveOrders();
-      fetchHeldAndCompleted();
+      fetchCompletedAndCancelled();
     } catch (err) {
       addToast(err?.response?.data?.message || "Failed to split", "error");
     } finally {
@@ -548,154 +525,6 @@ export default function ActiveOrdersPage() {
     }
   };
 
-  // ── Hold Order ──
-  const handleHoldOrder = async (order) => {
-    if (isOrderCancelled(order)) {
-      addToast('This order has been cancelled and cannot be placed on hold.', 'error');
-      return;
-    }
-    if (settings.enableHoldOrders === false) {
-      addToast('Hold orders is disabled in POS Settings', 'warning');
-      return;
-    }
-    if (holdBusyRef.current) return; // duplicate tap / retry guard
-    holdBusyRef.current = true;
-    setHoldLoading(order.id);
-    try {
-      await orderApi.hold(order.id);
-      addToast(`Order ${order.orderNo || order.id} placed on hold.`, 'success');
-      incrementRefreshTrigger(); // triggers refreshTrigger useEffect (fetches active, held, completed)
-    } catch (e) {
-      addToast(e?.response?.data?.message || 'Failed to hold order', 'error');
-    } finally {
-      holdBusyRef.current = false;
-      setHoldLoading(null);
-    }
-  };
-
-  // ── Held Orders Handlers ──
-
-  const handleResumeHold = async (orderId) => {
-    if (resumeBusyRef.current) return; // duplicate tap / retry guard
-    resumeBusyRef.current = true;
-    setActionLoading(orderId);
-    try {
-      const backendId = parseInt(orderId.toString());
-      // Resume only clears the hold flag: the ORIGINAL order id, its table and
-      // its existing KOT(s) are reused. No new order and no new KOT is created.
-      const resp = await orderApi.resume(backendId);
-      if (resp.success) {
-        addToast('Order resumed. You can now modify it.', 'success');
-        setHeldOrders(prev => prev.filter(o => o.id !== backendId));
-        setOrdersActiveTab('Active');
-        // Open the Take Order Wizard as overlay (stays on Active Orders)
-        setActiveOrderTakingId(`ord-${backendId}`);
-        setShowTakeOrderWizard(true);
-        incrementRefreshTrigger(); // triggers refreshTrigger useEffect
-      }
-    } catch (e) {
-      addToast(e.message || 'Failed to resume order', 'error');
-    } finally {
-      resumeBusyRef.current = false;
-      setActionLoading(null);
-    }
-  };
-
-  const handlePrintKotHeld = async (orderId) => {
-    if (kotLoading) return; // double-click protection
-    const heldOrder = heldOrders.find(o => o.id === parseInt(orderId.toString()));
-    if (heldOrder && isOrderCancelled(heldOrder)) {
-      addToast('This order has been cancelled and cannot be printed.', 'error');
-      return;
-    }
-    if (settings.enableKitchen === false) {
-      addToast('Kitchen module is disabled in POS Settings', 'warning');
-      return;
-    }
-    setKotLoading(orderId);
-    const backendId = parseInt(orderId.toString());
-    try {
-      // Create a DELTA KOT for held orders too
-      const kotResp = await kotApi.create({ orderId: backendId });
-      // Backend returns { success: true, data: { created, kot, kotItems, kotNo } }
-      const kotData = kotResp?.data || kotResp;
-
-      // If no new items, backend returns created=false — this is normal, not an error
-      if (kotData?.created === false || !kotData?.kotNo) {
-        addToast('No new items to send to kitchen.', 'info');
-        return;
-      }
-
-      const kotNo = kotData?.kotNo || '';
-      // KOTItems from the response contain ONLY the delta items for this KOT.
-      // Never fall back to order.orderItems — that would print all items.
-      const items = kotData?.kotItems || [];
-
-      openKotPrintPreview({
-        restaurantName: settings?.branding?.restaurantName || '',
-        kotNo: kotNo,
-        orderNo: heldOrder?.orderNo || String(backendId),
-        tableNo: heldOrder?.table?.tableNo || '',
-        orderType: heldOrder?.orderType || 'DINE_IN',
-        waiterName: heldOrder?.user?.name || '',
-        customerName: heldOrder?.customer?.name || '',
-        customerPhone: heldOrder?.customer?.phone || '',
-        guestCount: heldOrder?.guestCount || 1,
-        notes: heldOrder?.notes || '',
-        items: items,
-        footer: settings?.receiptFooterMessage || 'Thank You!',
-        date: new Date()
-      });
-      addToast(`KOT ${kotNo} created successfully!`, 'success');
-      incrementRefreshTrigger();
-    } catch (e) {
-      const msg = e?.message || 'Unable to connect to the printer. Please check your printer settings and try again.';
-      addToast(msg, 'error');
-    } finally {
-      setKotLoading(null);
-    }
-  };
-
-  const handleCheckoutHeld = async (orderId) => {
-    const heldOrder = heldOrders.find(o => o.id === parseInt(orderId.toString()));
-    if (heldOrder && isOrderCancelled(heldOrder)) {
-      addToast('This order has been cancelled and cannot be billed.', 'error');
-      return;
-    }
-    if (settings.enableBilling === false) {
-      addToast('Billing module is disabled in POS Settings', 'warning');
-      return;
-    }
-    setCheckoutOrderId(orderId);
-  };
-
-  const handleDeleteHeld = async (orderId) => {
-    if (!orderId) {
-      setConfirmDelete(null);
-      return;
-    }
-    setActionLoading(orderId);
-    const backendId = parseInt(orderId.toString());
-    // Capture table info from local state BEFORE API call
-    const heldOrder = heldOrders.find(o => o.id === backendId);
-    const tableId = heldOrder?.tableId || heldOrder?.table?.id;
-    try {
-      await orderApi.cancel(backendId, 'Deleted from held orders');
-      // Release the table
-      if (tableId) {
-        try { await tableApi.updateStatus(tableId, 'AVAILABLE'); } catch {}
-      }
-      addToast('Held order deleted.', 'success');
-      setHeldOrders(prev => prev.filter(o => o.id !== backendId));
-      incrementRefreshTrigger();
-    } catch (e) {
-      addToast(e.message || 'Failed to delete order', 'error');
-    } finally {
-      setActionLoading(null);
-      setConfirmDelete(null);
-    }
-  };
-
   // ── Helpers ──
   const getStatusStyle = (status) => STATUS_STYLES[status] || STATUS_STYLES.PENDING;
   const getItemCount = (order) => (order.orderItems || []).reduce((s, i) => s + (i.quantity || 0), 0);
@@ -750,7 +579,6 @@ export default function ActiveOrdersPage() {
 
   const tabs = [
     { key: 'Active', label: 'Active', icon: Play, count: activeOrders.length },
-    { key: 'Hold', label: 'Hold', icon: Coffee, count: filteredHeld.length, setting: 'enableHoldOrders' },
     { key: 'Completed', label: 'Completed', icon: CheckCircle2, count: filteredCompleted.length },
     { key: 'Cancelled', label: 'Cancelled', icon: Ban, count: cancelledOrders.length },
   ];
@@ -765,7 +593,7 @@ export default function ActiveOrdersPage() {
     // §14: only a REAL table relationship becomes a table label. Takeaway /
     // counter orders have no table — never invent "TABLE —" or a number.
     // A BASIC_POS food business renders counter-oriented cards instead:
-    // "COUNTER ORDER", no table/floor identifiers, no Transfer/Hold.
+    // "COUNTER ORDER", no table/floor identifiers, no Transfer.
     const isCounterOrder = isCounterOriented;
     const tableName = order.table
       ? `Table ${order.table.tableNo || order.table.name}`
@@ -876,19 +704,12 @@ export default function ActiveOrdersPage() {
           )}
         </div>
         <div className="grid grid-cols-2 gap-1.5 mt-1.5">
-          {/* §14: Transfer/Hold depend on table/seating behavior — never shown
-              for BASIC_POS counter orders. Restaurants keep both. */}
+          {/* §14: Transfer depends on table/seating behavior — never shown
+              for BASIC_POS counter orders. Restaurants keep it. */}
           {!isCounterOrder && settings.enableTransferTable !== false && (order.tableId || order.table?.id) && (
             <button onClick={() => handleOpenTransfer(order)}
               className="h-10 bg-white border border-slate-200 hover:bg-slate-50 text-[#111827] font-bold rounded-lg text-[9px] uppercase tracking-wider flex items-center justify-center gap-1 transition-colors cursor-pointer">
               <ArrowRight className="w-3 h-3" /> Transfer
-            </button>
-          )}
-          {!isCounterOrder && settings.enableHoldOrders !== false && (
-            <button onClick={() => handleHoldOrder(order)} disabled={holdLoading === order.id}
-              className={`h-10 bg-white border border-amber-200 hover:bg-amber-50 text-amber-700 font-bold rounded-lg text-[9px] uppercase tracking-wider flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed`}>
-              {holdLoading === order.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Coffee className="w-3 h-3" />}
-              Hold
             </button>
           )}
           {order.isMerged && order.mergeGroupId && (
@@ -903,74 +724,6 @@ export default function ActiveOrdersPage() {
             <Ban className="w-3 h-3" /> Cancel
           </button>
         </div>
-      </div>
-    );
-  };
-
-  const renderHoldCard = (order) => {
-    const elapsed = getElapsed(order.createdAt);
-    const itemCount = (order.orderItems || []).reduce((s, i) => s + (i.quantity || 0), 0);
-    const total = order.grandTotal || order.subtotal || 
-      (order.orderItems || []).reduce((s, i) => s + Number(i.total || i.price || 0) * (i.quantity || 1), 0);
-    const isLoading = actionLoading === order.id;
-    const tableName = order.table ? `Table ${order.table.tableNo || order.table.name}` : 'Takeaway';
-    const waiterName = order.user?.name || 'Staff';
-
-    return (
-      <div key={order.id}
-        className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-xs space-y-3 hover:shadow-md transition-all">
-        {/* Top: Order Number & Status */}
-        <div className="flex items-start justify-between">
-          <div>
-            <div className="flex items-center gap-1.5">
-              <span className="font-extrabold text-sm text-amber-700 font-mono">#{order.orderNo || order.id}</span>
-              <span className="text-[8px] font-extrabold px-1.5 py-0.5 rounded uppercase bg-amber-100 text-amber-700">HOLD</span>
-            </div>
-            <p className="text-xs font-black text-slate-800 mt-0.5 flex items-center gap-1">
-              <Users className="w-3 h-3 text-slate-400" />
-              {tableName}
-              {order.customer?.name && <span className="text-[10px] text-slate-500 font-medium">· {order.customer.name}</span>}
-            </p>
-          </div>
-          <div className="flex items-center gap-1 text-[10px] font-bold text-slate-500">
-            <Clock className="w-3.5 h-3.5 text-amber-500" />
-            {elapsed}
-          </div>
-        </div>
-
-        {/* Info Bar */}
-        <div className="flex items-center gap-3 text-[10px] text-slate-500 font-semibold border-t border-slate-100 pt-2">
-          <span className="flex items-center gap-0.5"><ChefHat className="w-3 h-3" /> {waiterName}</span>
-          <span>{itemCount} item{itemCount !== 1 ? 's' : ''}</span>              <span className="ml-auto font-mono font-bold text-slate-800">{currency}{Number(total).toFixed(0)}</span>
-        </div>
-
-        {/* Actions */}
-        {isLoading ? (
-          <div className="flex items-center justify-center py-2"><Loader2 className="w-4 h-4 animate-spin text-amber-600" /></div>
-        ) : (
-          <div className="grid grid-cols-3 gap-1.5 border-t border-slate-100 pt-2.5">
-            <button onClick={() => handleResumeHold(order.id)}
-              className="h-10 text-[9px] font-bold bg-amber-100 hover:bg-amber-200 text-amber-800 rounded-lg flex items-center justify-center gap-1 transition-all cursor-pointer">
-              <RotateCcw className="w-3 h-3" /> Resume
-            </button>
-            {settings.enableKitchen !== false && (
-              <button onClick={() => handlePrintKotHeld(order.id)} disabled={kotLoading === order.id}
-                className="h-10 text-[9px] font-bold bg-orange-100 hover:bg-orange-200 text-orange-800 rounded-lg flex items-center justify-center gap-1 transition-all cursor-pointer disabled:opacity-50">
-                {kotLoading === order.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Printer className="w-3 h-3" />} KOT
-              </button>
-            )}
-            {settings.enableBilling !== false && canBill && (
-              <button onClick={() => handleCheckoutHeld(order.id)}
-                className="h-10 text-[9px] font-bold bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded-lg flex items-center justify-center gap-1 transition-all cursor-pointer">
-                <DollarSign className="w-3 h-3" /> Checkout
-              </button>
-            )}
-            <button onClick={() => setConfirmDelete(order.id)}
-              className="col-span-3 h-10 text-[9px] font-bold bg-red-50 hover:bg-red-100 text-red-600 rounded-lg flex items-center justify-center gap-1 transition-all cursor-pointer">
-              <Trash2 className="w-3 h-3" /> Delete
-            </button>
-          </div>
-        )}
       </div>
     );
   };
@@ -1099,14 +852,13 @@ Items: ${itemsCount}`, 'info');
             </h3>
             <p className="text-[10px] text-slate-400 font-medium">
               {ordersActiveTab === 'Active' ? 'Active tickets and tables' :
-               ordersActiveTab === 'Hold' ? 'Orders saved for later' :
                ordersActiveTab === 'Completed' ? 'Completed orders' : 'Cancelled orders'}
             </p>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={() => {
               if (ordersActiveTab === 'Active') fetchActiveOrders();
-              else fetchHeldAndCompleted();
+              else fetchCompletedAndCancelled();
             }}
               className="p-2 rounded-xl border border-slate-200 hover:bg-slate-50 transition-all cursor-pointer" title="Refresh">
               <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
@@ -1165,25 +917,6 @@ Items: ${itemsCount}`, 'info');
           )
         )}
 
-        {/* ── HOLD TAB ── */}
-        {ordersActiveTab === 'Hold' && (
-          heldLoading ? (
-            <div className="flex items-center justify-center py-16 text-slate-400">
-              <Loader2 className="w-4 h-4 animate-spin mr-2" />
-              <span className="text-xs font-semibold">Loading held orders...</span>
-            </div>
-          ) : filteredHeld.length > 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {filteredHeld.map(renderHoldCard)}
-            </div>
-          ) : (
-            <div className="text-center py-24 text-slate-400 text-xs italic bg-slate-50/50 rounded-2xl border border-dashed p-8">
-              <Coffee className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-              No held orders. Hold an order from POS to see it here.
-            </div>
-          )
-        )}
-
         {/* ── COMPLETED TAB ── */}
         {ordersActiveTab === 'Completed' && (
           filteredCompleted.length > 0 ? (
@@ -1212,31 +945,6 @@ Items: ${itemsCount}`, 'info');
           )
         )}
       </div>
-
-      {/* Delete Confirmation Dialog for Held Orders */}
-      {confirmDelete && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
-          <div className="bg-white w-full max-w-sm rounded-2xl shadow-xl border border-slate-100 p-5 space-y-4 animate-fade-in">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center">
-                <AlertTriangle className="w-5 h-5 text-red-500" />
-              </div>
-              <div>
-                <h4 className="text-sm font-extrabold text-slate-800">Delete Held Order</h4>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  Are you sure you want to delete this held order? This action cannot be undone.
-                </p>
-              </div>
-            </div>
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => setConfirmDelete(null)}
-                className="h-8.5 px-4 bg-white border border-slate-200 rounded-xl text-[10px] font-bold text-slate-600 hover:bg-slate-50 transition-all cursor-pointer">Cancel</button>
-              <button onClick={() => handleDeleteHeld(confirmDelete)}
-                className="h-8.5 px-4 bg-red-600 hover:bg-red-700 rounded-xl text-[10px] font-bold text-white transition-all cursor-pointer">Delete Order</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Cancel Order Confirmation */}
       {showCancelConfirm && (

@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { Search, Clock, Check, Ban, RefreshCw, Loader2 } from 'lucide-react';
 import kotApi from '../../../api/kot.api';
 import { useSocketEvent } from '../../../hooks/useSocket';
-import { groupKotsByTab } from '../../../utils/kotTabs';
+import { KOT_TABS, groupKotsByTab } from '../../../utils/kotTabs';
 
 // The Kitchen Tickets screen is the PRODUCTION surface only: it shows tickets
 // and their kitchen status. Checkout/billing lives exclusively on the
@@ -62,9 +62,9 @@ export default function KitchenPage() {
     },
   });
 
-  // Hold / resume / accept / complete all emit `order:updated` — refetch so the
-  // Active ↔ On Hold ↔ History split reflects the stored order status instead
-  // of stale list state.
+  // Accept / complete / cancel on an order emit `order:updated` — refetch so
+  // the Active ↔ History split reflects the stored order status instead of
+  // stale list state.
   useSocketEvent({
     event: 'order:updated',
     handler: () => { fetchKots(); },
@@ -84,19 +84,15 @@ export default function KitchenPage() {
 
   // ── Ticket state — ONE source of truth per KOT ──
   // Mutually exclusive buckets derived from the STORED KOT + order status
-  // (utils/kotTabs.js): a held ticket can never be Active and On Hold at the
-  // same time, and a finished/voided ticket never shows as Active.
+  // (utils/kotTabs.js): a ticket shows up in exactly one tab, and a
+  // finished/voided ticket never shows as Active. A ticket whose order is a
+  // LEGACY held row is Active (open) so it cannot vanish from the kitchen.
   const kotTabs = groupKotsByTab(kots);
-  const activeKots = kotTabs.Active;
-  const holdKots = kotTabs['On Hold'];
-  const historyKots = kotTabs.History;
 
   const getFilteredKots = () => {
     switch (activeTab) {
-      case 'Active': return activeKots;
-      case 'On Hold': return holdKots;
-      case 'History': return historyKots;
-      default: return activeKots;
+      case 'History': return kotTabs.History;
+      default: return kotTabs.Active;
     }
   };
 
@@ -200,7 +196,7 @@ export default function KitchenPage() {
 
         {/* Tabs */}
         <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-[10px] font-bold shrink-0">
-          {['Active', 'On Hold', 'History'].map((tab) => (
+          {KOT_TABS.map((tab) => (
             <button
               key={tab}
               onClick={() => { setActiveTab(tab); setSelectedKotId(null); }}

@@ -19,8 +19,6 @@ export const orderApi = {
     apiClient.patch(`/orders/${id}/discount`, data),
   cancel: (id, reason) =>
     apiClient.patch(`/orders/${id}/cancel`, { reason }),
-  hold: (id) => apiClient.patch(`/orders/${id}/hold`),
-  resume: (id) => apiClient.patch(`/orders/${id}/resume`),
   changeTable: (id, tableId) =>
     apiClient.patch(`/orders/${id}/change-table`, { tableId }),
   mergeOrders: (sourceOrderId, targetOrderId) =>

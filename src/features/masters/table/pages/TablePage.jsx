@@ -10,6 +10,7 @@ import { useBodyScrollLock } from '../../../../hooks/useBodyScrollLock';
 import TableMergeModal from '../components/TableMergeModal';
 import { canHandleBilling } from '../../../../utils/permissions';
 import { isAcNonAcPricingEnabled } from '../../../../utils/businessCapabilities';
+import { resolveOrderEntryScreen } from '../../../../utils/orderFlow';
 
 // Module-level cache to prevent refetch on remount
 let cachedTables = null;
@@ -28,6 +29,30 @@ export default function TablesPage() {
   // AC / Non-AC table type is a RESTAURANT-mode feature only — the selector is
   // never shown for Basic POS / Quick Billing / retail (backend enforces too).
   const acNonAcPricing = isAcNonAcPricingEnabled(settings);
+
+  // ── Where table ordering happens ──
+  // ONE integrated screen: the POS Ordering screen (TakeOrderWizard in page
+  // mode) owns table selection AND the menu, so a tapped table is handed to
+  // that screen with its own state instead of being ordered in a separate
+  // modal/card overlay stacked on top of this board. Resolution is null when
+  // the tenant has no dedicated order-entry screen (counter/retail), in which
+  // case the existing overlay is kept so table ordering is never lost.
+  const orderEntryScreen = resolveOrderEntryScreen(settings);
+
+  /**
+   * Hand the current table flow over to the POS Ordering screen.
+   * The wizard reads the hand-off (pendingTable / activeOrderTakingId) on mount
+   * and renders the menu inline; the overlay path is used only as a fallback
+   * when the mode has no dedicated order-entry screen.
+   */
+  const openOrderEntryScreen = () => {
+    if (orderEntryScreen) {
+      setShowTakeOrderWizard(false);
+      setScreen(orderEntryScreen);
+    } else {
+      setShowTakeOrderWizard(true);
+    }
+  };
 
   const [tables, setTables] = useState(cachedTables || []);
   const [floors, setFloors] = useState([]);
@@ -250,7 +275,7 @@ export default function TablesPage() {
       seats: guestCount || openTableTarget.seats || 2,
     });
     setShowOpenTableModal(false);
-    setShowTakeOrderWizard(true);
+    openOrderEntryScreen();
   };
 
   const handleChangeStatus = (tableId, newStatus) => {
@@ -977,9 +1002,11 @@ export default function TablesPage() {
                   (o.table?.name === occTbl.name)
                 );
                 if (tableOrder) {
-                  // Use the real backend order ID from cartStore
+                  // Use the real backend order ID from cartStore, then continue
+                  // on the POS Ordering screen (same integrated surface as
+                  // Open Table — never a separate overlay).
                   setActiveOrderTakingId(tableOrder.id);
-                  setShowTakeOrderWizard(true);
+                  openOrderEntryScreen();
                 } else {
                   // No real backend order found — redirect to Active Orders
                   addToast('Could not find the order. Try Active Orders.', 'warning');

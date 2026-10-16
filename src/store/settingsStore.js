@@ -13,7 +13,7 @@ const MODULE_VISIBILITY_KEYS = [
 const BUSINESS_MODE_PRESETS = {
   restaurant: {
     label: 'Restaurant Mode',
-    description: 'Full dine-in experience with tables, KOT, Active Orders, and Hold Orders',
+    description: 'Full dine-in experience with tables, KOT, and Active Orders',
     settings: {
       enableCounterSale: false,
       enableKitchen: true,
@@ -82,7 +82,7 @@ const UI_ONLY_KEYS = [
   'sidebarCollapsed',
   'security',
   // Module visibility
-  'enablePosOrdering', 'enableKitchen', 'enableBilling', 'enableHoldOrders', 'enableAddItem',
+  'enablePosOrdering', 'enableKitchen', 'enableBilling', 'enableAddItem',
   'enableSplitBill', 'enableTransferTable', 'enableMergeTables', 'enableFloorManagement',
   'enableReports', 'enableMenu', 'enableStock', 'enableActiveOrders', 'enableTableReservations',
   // Counter Sale (businessMode is derived from subscription — not UI-persisted)
@@ -179,7 +179,6 @@ const defaultSettings = {
   posLayout: 'basic',           // POS Layout: 'basic' (Basic POS) | 'standard' | 'quick'
   enableKitchen: true,          // KOT generation + Kitchen module
   enableBilling: true,          // Billing workflow
-  enableHoldOrders: true,       // Hold orders functionality
   enableAddItem: true,          // Add items to occupied tables
   enableSplitBill: true,        // Split bill button in billing
   enableTransferTable: true,    // Transfer table button
@@ -349,7 +348,6 @@ const useSettingsStore = create((set, get) => ({
             // Module visibility (from backend, fallback to defaults)
             enableKitchen: s.enableKitchen ?? base.enableKitchen,
             enableBilling: s.enableBilling ?? base.enableBilling,
-            enableHoldOrders: s.enableHoldOrders ?? base.enableHoldOrders,
             enableAddItem: s.enableAddItem ?? base.enableAddItem,
             enableSplitBill: s.enableSplitBill ?? base.enableSplitBill,
             enableTransferTable: s.enableTransferTable ?? base.enableTransferTable,
@@ -468,7 +466,7 @@ const useSettingsStore = create((set, get) => ({
         'address', 'logo', 'currency', 'timezone', 'language', 'taxPercentage',
         'serviceCharge', 'roundOffEnabled', 'billPrefix', 'billNumberStart',
         'invoicePrefix', 'kotPrefix', 'enableKitchenDisplay', 'enableKotStatusTracking',
-        'receiptFooter', 'enableKitchen', 'enableBilling', 'enableHoldOrders',
+        'receiptFooter', 'enableKitchen', 'enableBilling',
         'enableAddItem', 'enableSplitBill', 'enableTransferTable', 'enableMergeTables',
         'enableFloorManagement', 'enableReports', 'enableMenu', 'enableStock',
         'enableActiveOrders',        'enableTableReservations', 'enableStaffRoster', 'autoPrintBill', 'autoPrintKOT',
@@ -522,7 +520,6 @@ const useSettingsStore = create((set, get) => ({
         // Module Visibility
         enableKitchen: Boolean(s.enableKitchen !== false),
         enableBilling: Boolean(s.enableBilling !== false),
-        enableHoldOrders: Boolean(s.enableHoldOrders !== false),
         enableAddItem: Boolean(s.enableAddItem !== false),
         enableSplitBill: Boolean(s.enableSplitBill !== false),
         enableTransferTable: Boolean(s.enableTransferTable !== false),

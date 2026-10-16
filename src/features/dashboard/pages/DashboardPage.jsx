@@ -59,7 +59,7 @@ export default function DashboardPage() {
     return () => { mountedRef.current = false; };
   }, []);
 
-  // Re-fetch when data changes (triggered by TakeOrderWizard after Save/Hold/KOT)
+  // Re-fetch when data changes (triggered by TakeOrderWizard after KOT/Place Order)
   useEffect(() => {
     if (refreshTrigger > 0) {
       cachedData = null;

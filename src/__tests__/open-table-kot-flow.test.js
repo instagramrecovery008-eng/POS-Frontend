@@ -39,8 +39,11 @@ const appLogo = read('components/common/AppLogo.jsx');
 const activeOrders = read('features/orders/pages/ActiveOrdersPage.jsx');
 const uiStore = read('store/uiStore.js');
 const settingsStore = read('store/settingsStore.js');
+const orderApi = read('api/order.api.js');
 const orderController = readFileSync(path.join(SRC, '../../backend/src/controllers/order.controller.js'), 'utf8');
 const kotController = readFileSync(path.join(SRC, '../../backend/src/controllers/kot.controller.js'), 'utf8');
+const orderRoutes = readFileSync(path.join(SRC, '../../backend/src/routes/order.routes.js'), 'utf8');
+const releaseScript = readFileSync(path.join(SRC, '../../backend/scripts/release-held-orders.js'), 'utf8');
 
 // ═══════════════════════════════════════════════
 //  1. OPEN TABLE HAND-OFF (selected table identity)
@@ -65,10 +68,17 @@ check(!/setActiveTableNumber/.test(tablePage), 'the old ambiguous activeTableNum
 check(!/o\.table\?\.tableNo\?\.toString\(\) === tableNo/.test(wizard),
   'the wizard never matches tables by display number');
 
-sub('Open Table opens a NEW order and goes straight to the menu');
+sub('Open Table opens a NEW order and goes straight to the menu ON the POS Ordering screen');
 check(/setActiveOrderTakingId\(null\); \/\/ hard reset/.test(tablePage),
   'the stale edit-order id is cleared before opening (never edits an old order)');
-check(/setShowTakeOrderWizard\(true\)/.test(tablePage), 'the order-entry wizard is opened');
+// One integrated screen: the tapped table is handed to the POS Ordering screen
+// (TakeOrderWizard in page mode). A separate modal/card overlay is NOT opened.
+check(/const orderEntryScreen = resolveOrderEntryScreen\(settings\);/.test(tablePage),
+  'the mode\'s order-entry screen is resolved (business-mode aware)');
+check(/setShowTakeOrderWizard\(false\);\s*setScreen\(orderEntryScreen\);/.test(tablePage),
+  'the menu opens on the POS Ordering screen instead of a separate overlay');
+check(/if \(orderEntryScreen\) \{[\s\S]{0,140}?\} else \{\s*setShowTakeOrderWizard\(true\);/.test(tablePage),
+  'the overlay is kept ONLY as the fallback for modes with no order-entry screen');
 check(!/status: 'Occupied', currentOrderId: null/.test(tablePage),
   'the table is NOT marked occupied optimistically (the backend does that on order creation)');
 check(/if \(!openTableTarget \|\| openingTableRef\.current\) return;/.test(tablePage),
@@ -99,13 +109,27 @@ check(/setSelectedTable\(match\);\s*setGuestCount\(pendingTable\.seats \|\| matc
   'the authoritative table row + guest count are applied');
 check(/orderType: backendOrderType,/.test(wizard) && /orderType === 'dine_in' \? 'DINE_IN' : 'TAKEAWAY'/.test(wizard),
   'the payload uses the existing DINE_IN enum value');
+
+sub('The table flow runs INLINE on the POS Ordering screen (page mode)');
+const newOrderPage = read('features/pos/workspace/pages/NewOrderPage.jsx');
+check(/const isTableSession = isPageMode && \(isOpenTableFlow \|\| !!activeOrderTakingId\);/.test(wizard),
+  'a page-mode table session (Open Table / Add Items) is detected');
+check(/const tableFlowReturnScreen = skipFloorMgmt \? 'dashboard' : 'tables';/.test(wizard),
+  'a finished/cancelled session returns to Floors & Tables');
+check(/const handleExitTableSession = \(\) => finishSession\(\);/.test(wizard),
+  'the full-screen session offers an explicit exit (the overlay Close cannot exist)');
+check(/aria-label=\{isPageMode \? 'Exit table order' : 'Close order wizard'\}/.test(wizard),
+  'the exit control is labelled distinctly and the overlay keeps its own label');
+check(/const hasOrderHandoff = useUiStore\(\(s\) => !!s.pendingTable \|\| !!s.activeOrderTakingId\);/.test(newOrderPage)
+  && /scanMode && !hasOrderHandoff \? <PosWorkspace \/> : <TakeOrderWizard mode="page" \/>/.test(newOrderPage),
+  'NewOrderPage renders the wizard inline for a handed-over table (scanner mode included)');
 check(/\{selectedTable && !isTakeaway && \(/.test(wizard) && /title=\{selectedTable\.name\}/.test(wizard),
   'the order-entry screen shows the selected table (so the wrong table cannot be mistaken for the right one)');
 
 // ═══════════════════════════════════════════════
 //  2. KITCHEN TABS — mutually exclusive from stored status
 // ═══════════════════════════════════════════════
-section('2. KOT STATUS FILTERING (Active vs On Hold vs History)');
+section('2. KOT STATUS FILTERING (Active vs History)');
 
 const { kotTabFor, groupKotsByTab } = await import('../utils/kotTabs.js');
 
@@ -117,18 +141,16 @@ const kot = (over = {}) => ({
   order: { status: over.orderStatus ?? 'PENDING', table: { tableNo: '05' } },
 });
 
-sub('Hold → only On Hold');
-const held = kot({ id: 1, orderStatus: 'HOLD' });
-eq(kotTabFor(held), 'On Hold', 'held ticket classifies as On Hold');
-eq(groupKotsByTab([held]).Active.length, 0, 'held ticket is NOT in Active');
-eq(groupKotsByTab([held])['On Hold'].length, 1, 'held ticket appears exactly once (On Hold)');
-eq(groupKotsByTab([held]).History.length, 0, 'held ticket is not History');
+sub('Legacy HOLD row → Active (never hidden, never duplicated)');
+const legacyHeld = kot({ id: 1, orderStatus: 'HOLD' });
+eq(kotTabFor(legacyHeld), 'Active', 'a legacy held ticket classifies as Active (still an open ticket)');
+eq(groupKotsByTab([legacyHeld]).Active.length, 1, 'it is listed exactly once in Active');
+eq(groupKotsByTab([legacyHeld]).History.length, 0, 'it is not History');
 
-sub('Resume → only Active');
-const resumed = kot({ id: 1, orderStatus: 'PENDING' });
-eq(kotTabFor(resumed), 'Active', 'resumed ticket classifies as Active');
-eq(groupKotsByTab([resumed])['On Hold'].length, 0, 'resumed ticket disappears from On Hold');
-eq(groupKotsByTab([resumed]).Active.length, 1, 'resumed ticket appears exactly once (Active)');
+sub('Open ticket → Active only');
+const openTicket = kot({ id: 6, orderStatus: 'PENDING' });
+eq(kotTabFor(openTicket), 'Active', 'open ticket classifies as Active');
+eq(groupKotsByTab([openTicket]).Active.length, 1, 'open ticket appears exactly once (Active)');
 
 sub('Completed / voided → History only');
 const served = kot({ id: 2, status: 'SERVED', orderStatus: 'COMPLETED' });
@@ -140,7 +162,6 @@ const completed = kot({ id: 5, status: 'PENDING', orderStatus: 'COMPLETED' });
 });
 const closing = groupKotsByTab([served, voided, voidedFlag, completed]);
 eq(closing.Active.length, 0, 'no finished ticket leaks into Active');
-eq(closing['On Hold'].length, 0, 'no finished ticket leaks into On Hold');
 eq(closing.History.length, 4, 'all four finished tickets are in History');
 
 sub('Every ticket lands in exactly ONE bucket');
@@ -151,65 +172,99 @@ const mixed = groupKotsByTab([
   kot({ id: 4, orderStatus: 'HOLD', status: 'ACCEPTED' }),
   kot({ id: 5, orderStatus: 'COMPLETED' }),
 ]);
-eq(mixed.Active.map(k => k.id), [2], 'Active = the single open ticket');
-eq(mixed['On Hold'].map(k => k.id), [1, 4], 'On Hold = the two held tickets');
+eq(mixed.Active.map(k => k.id), [1, 2, 4], 'Active = the three OPEN tickets (incl. legacy held rows)');
 eq(mixed.History.map(k => k.id), [3, 5], 'History = the two finished tickets');
-eq(mixed.Active.length + mixed['On Hold'].length + mixed.History.length, 5,
+eq(mixed.Active.length + mixed.History.length, 5,
   'bucket sizes always sum to the ticket count (no duplicates, no losses)');
+check(!('On Hold' in mixed), 'there is no On Hold bucket any more');
 
-sub('KitchenPage uses the shared classifier and refreshes on hold/resume');
-check(/import \{ groupKotsByTab \} from '\.\.\/\.\.\/\.\.\/utils\/kotTabs'/.test(kitchen),
+sub('KitchenPage uses the shared classifier and the Active/History tabs');
+check(/import \{ KOT_TABS, groupKotsByTab \} from '\.\.\/\.\.\/\.\.\/utils\/kotTabs'/.test(kitchen),
   'KitchenPage imports the shared classifier');
-check(/const kotTabs = groupKotsByTab\(kots\);/.test(kitchen), 'the three lists come from ONE classifier call');
-check(/const activeKots = kotTabs\.Active;/.test(kitchen), 'Active list is the Active bucket');
+check(/const kotTabs = groupKotsByTab\(kots\)/.test(kitchen), 'the tab lists come from ONE classifier call');
+check(/KOT_TABS\.map\(\(tab\) => \(/.test(kitchen), 'the tabs render from the shared KOT_TABS list');
+check(!/On Hold/.test(kitchen), 'the On Hold tab is gone');
 check(!/k\.status !== 'CANCELLED' && k\.status !== 'SERVED'/.test(kitchen),
   'the old overlapping Active filter is gone');
 check(/event: 'order:updated',[\s\S]{0,80}handler: \(\) => \{ fetchKots\(\); \}/.test(kitchen),
-  'hold / resume (order:updated) refetches the lists');
+  'order status changes refetch the lists');
 check(/activeTab\b/.test(kitchen) && /setSelectedKotId\(null\)/.test(kitchen),
   'switching tabs resets the selected ticket');
 
 // ═══════════════════════════════════════════════
-//  3. DUPLICATE KOT PREVENTION
+//  3. NO HOLD / RESUME — AND NO DUPLICATE KOT
 // ═══════════════════════════════════════════════
-section('3. NO DUPLICATE KOT (resume / retries)');
+section('3. NO HOLD / RESUME — AND NO DUPLICATE KOT');
 
-sub('Resuming can never create a second order or KOT');
-check(/if \(activeOrderTakingId \|\| isEditing\) \{[\s\S]{0,220}use Update Order to add items/.test(wizard),
-  'Save & Pay refuses to run for an existing order (would create a 2nd order + KOT)');
-check(/!isEditing && settings\.enableBilling !== false && canBill &&/.test(wizard),
-  'the Save & Pay button is hidden while editing/resuming');
+sub('The wizard has neither Hold Order nor Save & Pay');
+check(!/Hold Order/.test(wizard), 'the Hold Order action + label are gone from the wizard');
+check(!/handleHoldOrder/.test(wizard), 'the Hold handler is deleted');
+check(!/Save & Pay/.test(wizard), 'the Save & Pay action + label are gone');
+check(!/handleSaveAndPay/.test(wizard), 'the Save & Pay handler is deleted');
+check(!/orderApi\.hold\(/.test(wizard), 'the wizard never calls the removed hold endpoint');
+check(/handlePrintKot/.test(wizard), 'Print KOT is preserved');
+check(/Cancel Order/.test(wizard), 'Cancel Order is preserved');
+check(/clearPendingTable\(\);\s*await loadInitialData\(\);/.test(wizard),
+  'a printed KOT resets the wizard (clear cart + reload) so a second click cannot re-order');
+check(/settings\.enableKitchen === false &&/.test(wizard) && /const handlePlaceOrder = async \(\) => \{/.test(wizard),
+  'the kitchen-OFF configuration can still create an order (Place Order, no KOT)');
+check(!/handlePlaceOrder[\s\S]{0,2200}setCheckoutOrderId/.test(wizard),
+  'no create action opens the payment overlay — payment stays with the cashier');
 check(/clearPendingTable\(\);\s*setActiveOrderTakingId\(null\);\s*setShowTakeOrderWizard\(false\);/.test(wizard),
   'closing the wizard clears the pending table AND the edit-order id (no leak into the next flow)');
 check(/const handleCancelOrder = \(\) => \{[\s\S]{0,320}setActiveOrderTakingId\(null\);/.test(wizard),
   'cancelling also clears the edit-order id');
 
-sub('The resume action itself is a status change only');
-check(/await orderApi\.resume\(backendId\);/.test(activeOrders), 'resume calls the resume endpoint');
-check(!/handleResumeHold[\s\S]{0,900}kotApi\.create/.test(activeOrders),
-  'resuming never calls the KOT creation endpoint');
-check(!/handleResumeHold[\s\S]{0,900}orderApi\.create/.test(activeOrders),
-  'resuming never creates a new order');
-check(/if \(resumeBusyRef\.current\) return;/.test(activeOrders), 'repeat resume taps are ignored');
-check(/if \(holdBusyRef\.current\) return;/.test(activeOrders), 'repeat hold taps are ignored');
-check(/setActiveOrderTakingId\(`ord-\$\{backendId\}`\);/.test(activeOrders),
-  'resume re-opens the ORIGINAL order id (no new order)');
+sub('Creating an order relies on the backend auto-KOT exactly once');
+check(!/kotApi\.create/.test(wizard.match(/const handlePrintKot[\s\S]*?const handlePlaceOrder/)?.[0] || 'placeholder'),
+  'Print KOT never makes a second KOT call (the backend creates it with the order)');
+check(/const resp = await orderApi\.create\(payload\);[\s\S]{0,160}if \(!orderData \|\| !orderData\.id\)/.test(wizard),
+  'a failed order creation aborts before anything is printed');
 
-sub('Backend safety nets');
-check(/const resumeOrder = async \(req, res\) => \{[\s\S]*?Resuming NEVER creates a KOT/.test(orderController),
-  'resumeOrder documents + keeps the no-KOT invariant');
-check(/status === \"HOLD\"/.test(orderController) && /Only held orders can be resumed/.test(orderController),
-  'a repeated resume is rejected without side effects');
+sub('Adding items issues ONLY the unsent delta');
+check(/const kotResp = await kotApi\.create\(\{ orderId: backendId \}\);/.test(wizard),
+  'adding items asks the KOT endpoint for the delta');
+check(!/orderApi\.create/.test(wizard.match(/const handleUpdateOrder[\s\S]*?const handleClose/)?.[0] || 'placeholder'),
+  'updating an order never creates a second order');
+check(/orderNo: editingOrder\?\.orderNo \|\| String\(backendId\)/.test(wizard),
+  'the added-item KOT carries the real order number');
+check(/tableNo: editingOrder\?\.table\?\.tableNo/.test(wizard),
+  'the added-item KOT carries the table number where applicable');
+check(/orderType: editingOrder\?\.orderType \|\| 'DINE_IN'/.test(wizard),
+  'the added-item KOT carries the order type');
+
+sub('The removed workflow is gone from every screen and API client');
+check(!/handleResumeHold|handleHoldOrder|handlePrintKotHeld|handleCheckoutHeld|handleDeleteHeld/.test(activeOrders),
+  'Active Orders has no hold / resume / held handlers');
+check(!/enableHoldOrders/.test(activeOrders), 'Active Orders no longer reads a hold toggle');
+check(!/filteredHeld|heldOrders/.test(activeOrders), 'the Hold tab and its state are removed');
+check(/if \(o\.status === 'COMPLETED' \|\| o\.status === 'CANCELLED'\) return false;/.test(activeOrders),
+  'legacy held rows are NOT filtered out of Active (they cannot disappear from the board)');
+check(!/hold: \(id\)/.test(orderApi) && !/resume: \(id\)/.test(orderApi),
+  'the frontend API client has no hold/resume calls');
+check(!/holdOrder|resumeOrder/.test(orderController), 'the backend controller no longer defines hold/resume');
+check(!/\/:id\/hold|\/:id\/resume|holdOrder|resumeOrder/.test(orderRoutes),
+  'the backend routes no longer expose /hold or /resume');
+
+sub('Backend safety nets (KOT delta + row lock)');
 check(/SELECT id FROM "Order" WHERE id = \$\{Number\(orderId\)\} FOR UPDATE/.test(kotController),
   'KOT creation locks the order row (concurrent requests cannot both issue the same items)');
 check(/historicalKOTQuantity/.test(kotController) && /pending = Math\.max\(0, oi\.quantity - historicalKOTQuantity\)/.test(kotController),
   'the KOT delta is quantity − already-issued quantity (per-OrderItem history)');
+check(/sentQuantity: newSent/.test(kotController),
+  'OrderItem.sentQuantity is updated with what was just issued');
 check(/created: false, kot: null, kotItems: \[\]/.test(kotController),
   'a retry with nothing pending returns created=false (no duplicate ticket)');
-check(!/kotApi\.create/.test(wizard.match(/handlePrintKot[\s\S]*?handleSaveAndPay/)?.[0] || 'placeholder'),
-  'order creation relies on the backend auto-KOT (no second KOT call)');
+check(/sentQuantity: 0,/.test(orderController),
+  'a newly added OrderItem starts unsent (sentQuantity 0)');
 
-// ═══════════════════════════════════════════════
+sub('Legacy held orders have an explicit, non-destructive recovery path');
+check(/status: "HOLD", isDeleted: false/.test(releaseScript), 'the script reports legacy held orders');
+check(/data: \{ status: "PENDING", holdAt: null \}/.test(releaseScript), 'recovery only flips the order status');
+check(!/deleteMany|\.delete\(|cancelReason/.test(releaseScript), 'recovery never deletes or cancels orders, items or tickets');
+check(/CONFIRM_TOKEN/.test(releaseScript) && /--apply/.test(releaseScript),
+  'writes require an explicit --apply + confirmation token (dry-run by default)');
+
 //  4. KITCHEN TICKETS — production-only screen
 // ═══════════════════════════════════════════════
 section('4. KITCHEN TICKETS — no Checkout Desk');

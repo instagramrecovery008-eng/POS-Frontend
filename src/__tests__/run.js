@@ -142,7 +142,13 @@ sub('Active Orders — Bill / Checkout / Reprint Bill gated');
 const activeOrdersPage = read('features/orders/pages/ActiveOrdersPage.jsx');
 check(activeOrdersPage.includes('canHandleBilling'), 'ActiveOrdersPage imports canHandleBilling');
 const canBillCount = (activeOrdersPage.match(/canBill &&/g) || []).length;
-check(canBillCount >= 3, `Bill + Checkout + Reprint Bill all gated (found ${canBillCount} gates)`);
+// Bill (cashier checkout) + Reprint Bill. The old "Checkout" action belonged to
+// the removed held-orders tab, so two gates are expected now.
+check(canBillCount >= 2, `Bill + Reprint Bill both gated (found ${canBillCount} gates)`);
+check(/const handlePrintBill = \(order\) => \{[\s\S]{0,400}setCheckoutOrderId\(order\.id\)/.test(activeOrdersPage),
+  'Bill still opens the existing cashier checkout overlay');
+check(!/handleCheckoutHeld|handleHoldOrder|handleResumeHold/.test(activeOrdersPage),
+  'no held-order payment/hold actions remain');
 check(!/enableBilling !== false && !isServiceStaff/.test(activeOrdersPage), 'no stray !isServiceStaff billing gates remain');
 
 sub('Tables — Checkout button gated');
@@ -150,11 +156,14 @@ const tablePage = read('features/masters/table/pages/TablePage.jsx');
 check(tablePage.includes('canHandleBilling'), 'TablePage imports canHandleBilling');
 check(/canBill &&/.test(tablePage), 'Checkout gated by canBill');
 
-sub('Take Order Wizard — Save & Pay gated for non-billing roles');
+sub('Take Order Wizard — no Hold / Save & Pay, payment stays with the cashier');
 const wizardPage = read('features/pos/workspace/components/TakeOrderWizard.jsx');
-check(wizardPage.includes('canHandleBilling'), 'TakeOrderWizard imports canHandleBilling');
-check(/enableBilling !== false && canBill &&/.test(wizardPage), 'Save & Pay gated by canBill');
-check(/if \(canBill\)/.test(wizardPage), 'checkout only opens for billing-capable roles');
+check(!wizardPage.includes('handleSaveAndPay') && !/Save & Pay/.test(wizardPage), 'Save & Pay is gone');
+check(!wizardPage.includes('handleHoldOrder') && !/Hold Order/.test(wizardPage), 'Hold Order is gone');
+check(!wizardPage.includes('orderApi.hold'), 'no call to the removed hold endpoint');
+check(!wizardPage.includes('setCheckoutOrderId'), 'the wizard never opens the payment overlay itself (cashier checkout owns payment)');
+check(wizardPage.includes('handlePrintKot'), 'Print KOT (creates the order + its KOT) remains');
+check(wizardPage.includes('handleCancelOrder'), 'Cancel Order remains');
 
 sub('Basic POS — Payment button gated for non-billing roles');
 const posWorkspace = read('features/pos/workspace/pages/PosWorkspace.jsx');

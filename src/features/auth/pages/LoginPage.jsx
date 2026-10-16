@@ -1,4 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import {
+  ShieldCheck, LayoutGrid, ChefHat, BarChart3, ArrowRight,
+  Lock, UserRound, Store,
+} from 'lucide-react';
 import { useAuthStore, useUiStore, useSettingsStore } from '../../../store';
 import { settingApi } from '../../../api/setting.api';
 import LoginForm from '../components/LoginForm';
@@ -7,36 +11,56 @@ import PolicyTextModal from '../../../components/legal/PolicyTextModal';
 
 // Bundled KlarGo logo — used until a restaurant uploads its own via Settings.
 const DEFAULT_LOGO = '/klargo-logo.png';
+const PLATFORM_MARK = '/klargo-icon.png';
 
+// What the POS does — shown on the desktop brand panel (visual hierarchy, not
+// decoration for its own sake: it tells a first-time user what they are signing
+// into). Icons come from the same icon set as the rest of the app.
+const BRAND_POINTS = [
+  { icon: LayoutGrid, label: 'Floors & tables in real time' },
+  { icon: ChefHat, label: 'Kitchen tickets the moment an order lands' },
+  { icon: BarChart3, label: 'Sales, stock and staff in one place' },
+];
+
+/**
+ * Tenant logo mark on the login card.
+ *  - A configured logo is shown CONTAINED inside a fixed square shell, so any
+ *    aspect ratio is displayed undistorted and can never shift the layout.
+ *  - A missing or FAILED source falls back to the restaurant's initials — never
+ *    the browser's broken-image glyph.
+ */
 function RestaurantLogo({ logo, restaurantName }) {
   const [imgError, setImgError] = useState(false);
-
   const src = logo || DEFAULT_LOGO;
 
-  // Only fall back to initials when the resolved image fails to load.
+  // A new source always gets a fresh chance to load.
+  useEffect(() => { setImgError(false); }, [src]);
+
   if (!src || imgError) {
     const initials = (restaurantName || 'R')
       .split(' ')
       .filter(Boolean)
       .slice(0, 2)
-      .map(w => w[0])
+      .map((w) => w[0])
       .join('')
       .toUpperCase();
     return (
-      <div className="w-14 h-14 bg-slate-100 border-2 border-slate-200 rounded-2xl flex items-center justify-center">
+      <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-slate-200 bg-slate-100">
         <span className="text-lg font-extrabold text-slate-500">{initials || 'R'}</span>
       </div>
     );
   }
 
   return (
-    <img
-      src={src}
-      alt={restaurantName || 'Restaurant logo'}
-      className="w-14 h-14 object-cover rounded-2xl border-2 border-slate-200 bg-white"
-      onError={() => setImgError(true)}
-      referrerPolicy="no-referrer"
-    />
+    <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <img
+        src={src}
+        alt={restaurantName || 'Restaurant logo'}
+        className="h-full w-full object-contain p-1.5"
+        onError={() => setImgError(true)}
+        referrerPolicy="no-referrer"
+      />
+    </div>
   );
 }
 
@@ -136,88 +160,153 @@ export default function LoginPage() {
   const displayName = branding.name || 'KlarGo POS';
   const hasRestaurantBranding = brandingLoaded && branding.name;
 
+  const handleCreateAccount = () => {
+    clearError();
+    setLocalError('');
+    setScreen('register');
+  };
+
+  // ── Shared platform wordmark (brand panel on desktop, header on mobile) ──
+  const platformMark = (
+    <div className="flex items-center gap-3">
+      <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white shadow-md ring-1 ring-black/5">
+        <img src={PLATFORM_MARK} alt="KlarGo" className="h-8 w-8 object-contain" />
+      </span>
+      <div className="min-w-0">
+        <p className="text-lg font-extrabold uppercase leading-none tracking-tight text-[#16A34A] lg:text-white">
+          KlarGo POS
+        </p>
+        <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.18em] text-[#16A34A]/70 lg:text-white/70">
+          By Infinixo Technologies
+        </p>
+      </div>
+    </div>
+  );
+
   return (
-    <div className="min-h-screen bg-[#F8FAFC] flex flex-col items-center justify-center p-4 select-none font-sans">
-      {/* ── Platform Branding (above card) ── */}
-      <div className="mb-6 flex flex-col items-center text-center animate-fade-in">
-        <div className="flex items-center gap-3">
-          <img
-            src="/klargo-icon.png"
-            alt="KlarGo"
-            className="w-12 h-12 rounded-[14px] object-cover shadow-md border border-white/20 bg-white"
-          />
-          <div className="text-left">
-            <h1 className="text-2xl font-extrabold tracking-tight text-[#16A34A] uppercase leading-none">
-              KlarGo POS
-            </h1>
-            <p className="text-[10px] text-[#16A34A]/80 font-bold uppercase tracking-wider mt-1">
-              By Infinixo Technologies
+    <div className="flex min-h-screen w-full flex-col bg-[#F8FAFC] select-none font-sans lg:grid lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:bg-white">
+      {/* ── Brand panel (desktop / tablet-landscape) ── */}
+      <aside className="relative hidden overflow-hidden bg-gradient-to-br from-[#0B3D24] via-[#15803D] to-[#22C55E] p-10 lg:flex lg:flex-col lg:justify-between xl:p-14">
+        {/* Soft depth — decorative only, never intercepts pointer events */}
+        <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-white/10 blur-2xl" />
+        <div className="pointer-events-none absolute -bottom-36 -left-24 h-96 w-96 rounded-full bg-black/15 blur-3xl" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-white/10" />
+
+        <div className="relative">{platformMark}</div>
+
+        <div className="relative max-w-md space-y-5">
+          <h2 className="text-3xl font-extrabold leading-tight text-white xl:text-4xl">
+            Your restaurant floor,
+            <br />
+            running in real time.
+          </h2>
+          <p className="text-sm font-medium leading-relaxed text-white/80">
+            One fast, reliable terminal for orders, tables, kitchen tickets and billing —
+            built for service hours that never slow down.
+          </p>
+          <ul className="space-y-3 pt-1">
+            {BRAND_POINTS.map(({ icon: Icon, label }) => (
+              <li key={label} className="flex items-center gap-3">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white/15 ring-1 ring-white/20">
+                  <Icon className="h-4 w-4 text-white" />
+                </span>
+                <span className="text-xs font-semibold text-white/90">{label}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="relative flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-white/60">
+          <ShieldCheck className="h-4 w-4" />
+          Secure session · Isolated restaurant data
+        </div>
+      </aside>
+
+      {/* ── Sign-in column ── */}
+      <main className="flex flex-1 flex-col items-center justify-center px-4 py-8 sm:px-6 lg:px-10 lg:py-12 pt-safe pb-safe">
+        <div className="w-full max-w-[420px] animate-fade-in">
+          {/* Mobile / tablet brand header (the panel above is desktop-only) */}
+          <div className="mb-6 flex justify-center lg:hidden">{platformMark}</div>
+
+          <div className="w-full rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_20px_50px_-24px_rgba(15,23,42,0.35)] sm:p-7">
+            {/* ── Restaurant branding (this tenant) ── */}
+            <div className="flex flex-col items-center gap-3 border-b border-slate-100 pb-5">
+              {!brandingLoaded ? (
+                <div className="flex flex-col items-center gap-3 animate-pulse">
+                  <div className="h-16 w-16 rounded-2xl bg-slate-200" />
+                  <div className="h-4 w-36 rounded bg-slate-200" />
+                  <div className="h-3 w-24 rounded bg-slate-100" />
+                </div>
+              ) : (
+                <>
+                  <RestaurantLogo logo={branding.logo} restaurantName={branding.name} />
+                  <div className="space-y-1.5 text-center">
+                    <h1 className="text-base font-extrabold tracking-tight text-slate-800">
+                      {displayName}
+                    </h1>
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-[#16A34A]/10 px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] text-[#15803D]">
+                      <Lock className="h-3 w-3" />
+                      Terminal secure login
+                    </span>
+                    {!hasRestaurantBranding && (
+                      <p className="text-[10px] font-medium text-slate-400">
+                        Sign in to your POS workspace
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* ── Credentials ── */}
+            <div className="pt-5">
+              <LoginForm onSubmit={handleLogin} loading={loading} error={localError} />
+            </div>
+
+            {/* ── Secondary action: self-serve registration ── */}
+            <div className="mt-6 border-t border-slate-100 pt-5">
+              <p className="flex items-center justify-center gap-1.5 text-[11px] font-medium text-slate-500">
+                <Store className="h-3.5 w-3.5 text-slate-400" />
+                Don't have an account?
+              </p>
+              <button
+                type="button"
+                onClick={handleCreateAccount}
+                disabled={loading}
+                className="group mt-2.5 flex h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-[#16A34A]/40 bg-[#16A34A]/5 text-xs font-bold uppercase tracking-wider text-[#15803D] transition-all hover:border-[#16A34A] hover:bg-[#16A34A] hover:text-white focus:outline-none focus:ring-2 focus:ring-[#16A34A]/30 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+              >
+                <UserRound className="h-4 w-4" />
+                Create New Account
+                <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* ── Footer ── */}
+          <div className="mt-6 space-y-2 text-center">
+            <p className="text-[10px] font-medium text-slate-400">
+              &copy; 2026 Infinixo Technologies. All rights reserved.
             </p>
+            <div className="flex items-center justify-center gap-1.5 text-[10px] text-slate-400">
+              <button
+                type="button"
+                onClick={() => setOpenPolicy('PRIVACY_POLICY')}
+                className="font-medium transition-colors hover:text-[#16A34A] cursor-pointer"
+              >
+                Privacy Policy
+              </button>
+              <span className="text-slate-300">|</span>
+              <button
+                type="button"
+                onClick={() => setOpenPolicy('TERMS_OF_SERVICE')}
+                className="font-medium transition-colors hover:text-[#16A34A] cursor-pointer"
+              >
+                Terms of Service
+              </button>
+            </div>
           </div>
         </div>
-      </div>
-
-      {/* ── Login Card ── */}
-      <div className="w-full max-w-[400px] bg-white rounded-[20px] shadow-[0_12px_40px_rgba(44,62,80,0.08)] border border-slate-200 p-6 flex flex-col gap-5">
-        {/* ── Restaurant Branding inside card ── */}
-        <div className="flex flex-col items-center gap-2 pb-2 border-b border-slate-100">
-          {!brandingLoaded ? (
-            // Skeleton while loading
-            <div className="flex flex-col items-center gap-2 animate-pulse">
-              <div className="w-14 h-14 bg-slate-200 rounded-2xl" />
-              <div className="w-32 h-4 bg-slate-200 rounded" />
-            </div>
-          ) : (
-            <>
-              <RestaurantLogo logo={branding.logo} restaurantName={branding.name} />
-              <h2 className="text-sm font-extrabold text-slate-800 uppercase tracking-wide text-center">
-                {displayName}
-              </h2>
-              <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">
-                Terminal Secure Login
-              </p>
-            </>
-          )}
-        </div>
-
-        <LoginForm onSubmit={handleLogin} loading={loading} error={localError} />
-
-        {/* ── Create New Account (self-serve onboarding) ── */}
-        <div className="pt-4 border-t border-slate-100 text-center space-y-2">
-          <p className="text-[10px] text-slate-400 font-semibold">Don't have an account?</p>
-          <button
-            type="button"
-            onClick={() => { clearError(); setScreen('register'); }}
-            className="w-full h-10 rounded-xl border-2 border-[#16A34A] text-[#16A34A] hover:bg-[#16A34A] hover:text-white font-extrabold text-xs uppercase tracking-wider transition-all cursor-pointer"
-          >
-            Create New Account
-          </button>
-        </div>
-      </div>
-
-      {/* Footer */}
-      <div className="mt-8 text-center space-y-2 max-w-[400px] w-full">
-        <p className="text-[10px] text-slate-400 font-medium">
-          &copy; 2026 Infinixo Technologies. All rights reserved.
-        </p>
-        <div className="flex items-center justify-center gap-1.5 text-[10px] text-slate-400">
-          <button
-            type="button"
-            onClick={() => setOpenPolicy('PRIVACY_POLICY')}
-            className="hover:text-[#16A34A] transition-colors cursor-pointer font-medium"
-          >
-            Privacy Policy
-          </button>
-          <span className="text-slate-300">|</span>
-          <button
-            type="button"
-            onClick={() => setOpenPolicy('TERMS_OF_SERVICE')}
-            className="hover:text-[#16A34A] transition-colors cursor-pointer font-medium"
-          >
-            Terms of Service
-          </button>
-        </div>
-      </div>
+      </main>
 
       {openPolicy && (
         <PolicyTextModal type={openPolicy} onClose={() => setOpenPolicy(null)} />

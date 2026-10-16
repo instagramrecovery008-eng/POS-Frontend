@@ -5,7 +5,7 @@ import {
   CreditCard, Smartphone, AlertTriangle, AlertCircle,
   Clock, Printer, FileText, Save, Play, Ban,
   ArrowRight, ArrowLeft, Building2, ChefHat,
-  User, Coffee, DollarSign, Loader2,
+  User, Loader2,
   RotateCcw, UserPlus, LayoutGrid, Package
 } from 'lucide-react';
 import { useUiStore, useCartStore, useSettingsStore, useAuthStore } from '../../../../store';
@@ -19,7 +19,6 @@ import { userApi } from '../../../../api/user.api';
 import { floorApi } from '../../../../api/floor.api';
 import { openKotPrintPreview } from '../../../../services/printService';
 import { PLACEHOLDER_IMAGE } from '../../../../lib/imagePlaceholder';
-import { canHandleBilling } from '../../../../utils/permissions';
 import { useBodyScrollLock } from '../../../../hooks/useBodyScrollLock';
 import {
   SUBCATEGORY_ALL,
@@ -85,7 +84,7 @@ function ConfirmDialog({ open, title, message, confirmLabel, confirmVariant, onC
 
 // ── Main Wizard Component ───────────────────────────────────────────────────
 export default function TakeOrderWizard({ mode = 'modal' } = {}) {
-  const { showTakeOrderWizard, setShowTakeOrderWizard, setScreen, addToast, activeOrderTakingId, setActiveOrderTakingId, setOrdersActiveTab, currentScreen, incrementRefreshTrigger, setCheckoutOrderId, pendingTable, clearPendingTable } = useUiStore();
+  const { showTakeOrderWizard, setShowTakeOrderWizard, setScreen, addToast, activeOrderTakingId, setActiveOrderTakingId, currentScreen, incrementRefreshTrigger, pendingTable, clearPendingTable } = useUiStore();
   const { addOrder } = useCartStore();
   const { settings } = useSettingsStore();
   // Dietary indicators only for food verticals (§10) — retail fallback shows a
@@ -106,8 +105,6 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
   // Grant state from /users/me/permissions has loaded for this staff member
   // (exempt roles resolve immediately; staff resolve to [] or ['TAKEAWAY']).
   const grantLoaded = !!user && (isExemptRole || Array.isArray(assignedOrderTypes));
-  // Save & Pay opens the payment overlay — restricted to billing-capable roles
-  const canBill = canHandleBilling(user?.role);
   // Barcode scanner entitlement (Part 11): active only when the plan includes
   // the feature AND the restaurant toggle is ON. `barcodeScannerAvailable`
   // starts false until the settings store resolves the subscription snapshot —
@@ -117,9 +114,9 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
 
   // ── Step State ──
   const [currentStep, setCurrentStep] = useState(0);
-  const [submitting, setSubmitting] = useState(null); // null | 'hold' | 'kot' | 'bill' | 'update'
+  const [submitting, setSubmitting] = useState(null); // null | 'kot' | 'order' | 'update'
   // Synchronous re-entrancy guard: React state alone is async — a rapid
-  // double-tap on Place Order / Print KOT / Hold / Update would fire two
+  // double-tap on Print KOT / Place Order / Update would fire two
   // order-creation requests (duplicate order + double stock deduction).
   const submittingRef = useRef(false);
   const [actionSuccess, setActionSuccess] = useState(null);
@@ -244,6 +241,14 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
 
   const isPageMode = mode === 'page';
 
+  // ── Page-mode table session ──
+  // The POS Ordering screen (page mode) is entered from the Floors & Tables
+  // board whenever a table is being ordered: the Open Table hand-off or "Add
+  // Items" on an occupied table. The menu renders INLINE on that screen (no
+  // separate modal/card overlay), so the session needs its own exit affordance
+  // and its own end-of-session destination (the board it came from).
+  const isTableSession = isPageMode && (isOpenTableFlow || !!activeOrderTakingId);
+
   // ── Dine-In-only staff: skip the Order Type step entirely ──
   // Part 8 (Cases A/B): when resolution yields exactly ONE type and no forced
   // selection yet, auto-set it and jump straight to the floor step (dine-in)
@@ -329,14 +334,17 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
         if (!match) {
           addToast('That table is no longer available. Please pick another table.', 'error');
           clearPendingTable();
-          if (!isPageMode) setShowTakeOrderWizard(false);
+          // Page mode: leave the empty order screen and go back to the board
+          // (overlay mode: close the overlay) — never strand the user on a
+          // menu with no table.
+          if (isPageMode) setScreen(tableFlowReturnScreen); else setShowTakeOrderWizard(false);
           return;
         }
         if (match.status !== 'Available') {
           addToast(`Table ${pendingTable.tableNo || match.number} is ${String(match.status).toLowerCase()} — it cannot be opened.`, 'error');
           clearPendingTable();
           setSelectedTable(null);
-          if (!isPageMode) setShowTakeOrderWizard(false);
+          if (isPageMode) setScreen(tableFlowReturnScreen); else setShowTakeOrderWizard(false);
           return;
         }
         setSelectedTable(match);
@@ -625,6 +633,11 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
   const needsTable = orderType === 'dine_in';
   // §7: floor/table steps also skipped for non-table business types.
   const skipFloorMgmt = settings.enableFloorManagement === false || (settings.capabilities || {}).tables === false;
+  // Where a finished/cancelled table session returns to: the Floors & Tables
+  // board the hand-off was made on. When the tenant has no floors/tables
+  // workflow that board is not part of this tenant's UI, so fall back to the
+  // dashboard instead of navigating to a blocked screen.
+  const tableFlowReturnScreen = skipFloorMgmt ? 'dashboard' : 'tables';
   // When floor management is disabled, skip floor & table steps (Quick Order mode)
   // For takeaway: 3 steps (Order Type → Menu → Review) → maxStep = 2
   // For dine-in with floor mgmt: 5 steps → maxStep = 4
@@ -653,55 +666,6 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
       orderType: backendOrderType,
       items: itemsPayload,
     };
-  };
-
-  // ── Action: Hold Order ─────────────────────────────────────────────────────
-  const handleHoldOrder = async () => {
-    if (cart.length === 0) return;
-    if (submittingRef.current) return; // double-tap guard
-    submittingRef.current = true;
-    setSubmitting('hold');
-    try {
-      const payload = buildOrderPayload();
-      const resp = await orderApi.create({
-        ...payload,
-        notes: (payload.notes ? payload.notes + '; ' : '') + 'Placed on hold',
-      });
-      const orderData = resp?.success ? resp.data : resp;
-      if (orderData && orderData.id) {
-        await orderApi.hold(orderData.id);
-
-        // KOT is auto-created by backend during order creation — nothing more needed
-
-        // Add to local store
-        addOrder({
-          id: `ord-${orderData.id}`,
-          orderNumber: `#${orderData.orderNo || orderData.id}`,
-          tableName: selectedTable?.name || 'Takeaway',
-          guestsCount: guestCount,
-          timestamp: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
-          serverName: waiterName || 'Staff',
-          status: 'HOLD',
-          items: cart.map(c => ({ itemId: c.itemId, name: c.name, price: c.price, quantity: c.qty, status: 'Pending', notes: c.notes })),
-          orderType: orderType === 'dine_in' ? 'Dine In' : 'Takeaway',
-          discountAmount: 0,
-          paymentStatus: 'Pending',
-        });
-        incrementRefreshTrigger();
-        addToast(`Order ${orderData.orderNo || orderData.id} placed on hold.`, 'success');
-        setActionSuccess('hold');
-        clearPendingTable(); // hand-off consumed — the table now has a real order
-        setShowTakeOrderWizard(false);
-        const prevScreen = previousScreenRef.current;
-        if (prevScreen && prevScreen !== 'order_taking') setScreen(prevScreen);
-        setOrdersActiveTab('Hold');
-      }
-    } catch (e) {
-      addToast(e.message || 'Failed to hold order', 'error');
-    } finally {
-      submittingRef.current = false;
-      setSubmitting(null);
-    }
   };
 
   // ── Action: Print KOT (Create Order + Generate KOT) ────────────────────────
@@ -788,12 +752,19 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
         return;
       }
 
-      // Print initiated successfully → restart the SAME wizard at Step 1
-      // (Order Type) by reusing its own open routine (resetWizard clears the
-      // completed cart/order-type/floor/table state, then data reloads). The
-      // created order/KOT are untouched: no payment opens, no second order
-      // and no second KOT are created. The Open Table hand-off is consumed
-      // here so the restart begins at the normal first step.
+      // Print initiated successfully. The created order/KOT are untouched: no
+      // payment opens, no second order and no second KOT are created.
+      //   - Table session (POS Ordering screen entered from Floors & Tables):
+      //     the session ends on that board, where the table is now occupied.
+      //   - Otherwise: restart the SAME wizard at Step 1 (Order Type) by
+      //     reusing its own open routine (resetWizard clears the completed
+      //     cart/order-type/floor/table state, then data reloads), with the
+      //     hand-off consumed so the restart begins at the normal first step.
+      const wasTableSession = isPageMode && (!!pendingTable || !!activeOrderTakingId);
+      if (wasTableSession) {
+        finishSession();
+        return;
+      }
       clearPendingTable();
       await loadInitialData();
     } catch (e) {
@@ -805,65 +776,68 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
     }
   };
 
-  // ── Action: Save & Pay (Save Order → Navigate to Payment Screen) ──────────
-  const handleSaveAndPay = async () => {
+  // ── Action: Place Order (kitchen module OFF) ───────────────────────────────
+  // With "Enable Kitchen (KOT)" OFF there is no KOT workflow, so an order is
+  // created without a kitchen ticket (the documented OFF flow is
+  // Order → Direct Billing → Payment → Complete). Payment is NEVER opened from
+  // here — the cashier collects it from Active Orders / Billing, the single
+  // payment surface. The action is rendered ONLY while the kitchen module is
+  // disabled; when it is enabled Print KOT is the one action that creates the
+  // order (so there is never a second create button that could double-order).
+  const handlePlaceOrder = async () => {
     if (cart.length === 0) return;
-    // An already-created order (Add Item / resumed held order / any edit
-    // session) must NEVER be re-created here — creating a second order would
-    // also create a second KOT for the same items. Editing goes through
-    // Update Order, which adds only the new items to the ORIGINAL order.
+    if (needsTable && !selectedTable) {
+      addToast('Please select a table for Dine In orders.', 'warning');
+      return;
+    }
+    // An already-created order (Add Item / any edit session) must NEVER be
+    // re-created here — that would create a second order (+ its auto-KOT).
     if (activeOrderTakingId || isEditing) {
       addToast('This order already exists — use Update Order to add items.', 'warning');
       return;
     }
     if (submittingRef.current) return; // double-tap guard
     submittingRef.current = true;
-    setSubmitting('bill');
+    setSubmitting('order');
     try {
       const payload = buildOrderPayload();
       const resp = await orderApi.create(payload);
       const orderData = resp?.success ? resp.data : resp;
-      if (orderData && orderData.id) {
-
-        // KOT is auto-created by backend during order creation — nothing more needed
-
-        // Update table status
-        if (needsTable && selectedTable) {
-          const tableBackendId = getBackendId(selectedTable.id, 't-');
-          if (tableBackendId) {
-            try { await tableApi.updateStatus(tableBackendId, 'OCCUPIED'); } catch {}
-          }
-        }
-
-        // Add to local store
-        addOrder({
-          id: `ord-${orderData.id}`,
-          orderNumber: `#${orderData.orderNo || orderData.id}`,
-          tableName: selectedTable?.name || 'Takeaway',
-          guestsCount: guestCount,
-          timestamp: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
-          serverName: waiterName || 'Staff',
-          status: 'PREP',
-          items: cart.map(c => ({ itemId: c.itemId, name: c.name, price: c.price, quantity: c.qty, status: 'Pending', notes: c.notes })),
-          orderType: orderType === 'dine_in' ? 'Dine In' : 'Takeaway',
-          discountAmount: 0,
-          paymentStatus: 'Pending',
-        });
-
-        incrementRefreshTrigger();
-        setActionSuccess('bill');
-        clearPendingTable(); // hand-off consumed — the table now has a real order
-        if (canBill) {
-          // Billing-capable roles continue straight into the payment overlay
-          setCheckoutOrderId(orderData.id);
-          addToast(`Order ${orderData.orderNo || orderData.id} created. Proceed to payment.`, 'success');
-        } else {
-          // WAITER (or any non-billing role) never sees the payment overlay —
-          // the order is saved and the wizard closes without opening checkout.
-          addToast(`Order ${orderData.orderNo || orderData.id} created successfully.`, 'success');
-        }
-        setShowTakeOrderWizard(false);
+      if (!orderData || !orderData.id) {
+        throw new Error('Order creation failed — no order data returned');
       }
+
+      // Update table status if dine-in
+      if (needsTable && selectedTable) {
+        const tableBackendId = getBackendId(selectedTable.id, 't-');
+        if (tableBackendId) {
+          try { await tableApi.updateStatus(tableBackendId, 'OCCUPIED'); } catch {}
+        }
+      }
+
+      // Add to local store
+      addOrder({
+        id: `ord-${orderData.id}`,
+        orderNumber: `#${orderData.orderNo || orderData.id}`,
+        tableName: selectedTable?.name || 'Takeaway',
+        guestsCount: guestCount,
+        timestamp: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+        serverName: waiterName || 'Staff',
+        status: 'PREP',
+        items: cart.map(c => ({ itemId: c.itemId, name: c.name, price: c.price, quantity: c.qty, status: 'Pending', notes: c.notes })),
+        orderType: orderType === 'dine_in' ? 'Dine In' : 'Takeaway',
+        discountAmount: 0,
+        paymentStatus: 'Pending',
+      });
+
+      incrementRefreshTrigger();
+      setActionSuccess('order');
+      clearPendingTable(); // hand-off consumed — the table now has a real order
+      addToast(`Order ${orderData.orderNo || orderData.id} created. Collect payment from Active Orders.`, 'success');
+      setShowTakeOrderWizard(false);
+      setActiveOrderTakingId(null);
+      const prevScreen = previousScreenRef.current;
+      if (prevScreen && prevScreen !== 'order_taking') setScreen(prevScreen);
     } catch (e) {
       addToast(e.message || 'Failed to process order', 'error');
     } finally {
@@ -876,9 +850,15 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
   const handleCancelOrder = () => {
     // Discard the whole entry context — a pending table hand-off or a stale
     // edit-order id must never leak into the next wizard session.
+    const wasTableSession = isPageMode && (!!pendingTable || !!activeOrderTakingId);
     clearPendingTable();
     setActiveOrderTakingId(null);
     setShowTakeOrderWizard(false);
+    if (wasTableSession) {
+      // The session began on the Floors & Tables board — return there.
+      setScreen(tableFlowReturnScreen);
+      return;
+    }
     const prevScreen = previousScreenRef.current;
     if (prevScreen && prevScreen !== 'order_taking') setScreen(prevScreen);
   };
@@ -935,18 +915,23 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
               openKotPrintPreview({
                 restaurantName: settings?.branding?.restaurantName || '',
                 kotNo: kotNo || 'N/A',
-                orderNo: String(backendId),
-                tableNo: '',
-                orderType: 'DINE_IN',
-                waiterName: '',
-                customerName: '',
-                customerPhone: '',
-                guestCount: 1,
-                notes: '',
+                // The ticket must identify the REAL order — order number, the
+                // table it belongs to, order type, staff and kitchen notes.
+                // Items come from the KOTItems returned by the backend, which
+                // contain ONLY the newly added (previously unsent) quantities.
+                orderNo: editingOrder?.orderNo || String(backendId),
+                tableNo: editingOrder?.table?.tableNo || editingOrder?.table?.name || '',
+                orderType: editingOrder?.orderType || 'DINE_IN',
+                waiterName: editingOrder?.user?.name || user?.name || '',
+                customerName: editingOrder?.customer?.name || customerName || '',
+                customerPhone: editingOrder?.customer?.phone || customerPhone || '',
+                guestCount: editingOrder?.guestCount || 1,
+                notes: editingOrder?.notes || '',
                 items: (kotData?.kotItems || []).map(ki => ({
                   name: ki.menuItem?.name || 'Item',
                   quantity: ki.quantity || 1,
-                  notes: ki.notes || ''
+                  notes: ki.notes || '',
+                  dietaryType: ki.menuItem?.dietaryType || null
                 })),
                 footer: settings?.receiptFooterMessage || 'Thank You!',
                 date: new Date()
@@ -965,10 +950,10 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
 
       incrementRefreshTrigger();
       addToast('Items added successfully! Order updated.', 'success');
-      setShowTakeOrderWizard(false);
-      setActiveOrderTakingId(null);
-      const prevScreen = previousScreenRef.current;
-      if (prevScreen && prevScreen !== 'order_taking') setScreen(prevScreen);
+      // A table session (Add Items from the board) ends on the board, so the
+      // updated order/table state is visible; other screens get the wizard back
+      // on the screen they opened it from.
+      finishSession();
     } catch (e) {
       addToast(e.message || 'Failed to update order', 'error');
     } finally {
@@ -976,6 +961,29 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
       setSubmitting(null);
     }
   };
+
+  // ── End of session ──
+  // ONE cleanup + destination rule for every finished/cancelled session:
+  //   - page mode (POS Ordering screen): back to the Floors & Tables board the
+  //     table flow started from, where the table's new state is visible;
+  //   - overlay mode: back to the screen that opened the wizard (unchanged).
+  // The pending hand-off and any edit-order id are always dropped, so the next
+  // session can never inherit them (duplicate items / wrong table).
+  const finishSession = () => {
+    clearPendingTable();
+    setActiveOrderTakingId(null);
+    setShowTakeOrderWizard(false);
+    if (isPageMode) {
+      setScreen(tableFlowReturnScreen);
+      return;
+    }
+    const prevScreen = previousScreenRef.current;
+    if (prevScreen && prevScreen !== 'order_taking') setScreen(prevScreen);
+  };
+
+  // Explicit exit from the handed-over table order (the overlay's Close button
+  // cannot exist on a full screen).
+  const handleExitTableSession = () => finishSession();
 
   // ── Close Handler ──
   const handleClose = () => {
@@ -1557,15 +1565,6 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
               </div>
             )}
 
-            {/* Hold Order - hidden when editing, always hidden if module disabled */}
-            {!isEditing && settings.enableHoldOrders !== false && (
-            <button onClick={handleHoldOrder} disabled={submitting !== null}
-              className="p-3 border-2 border-amber-200 rounded-2xl hover:border-amber-500 hover:bg-amber-50 transition-all text-center cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
-              <Coffee className="w-5 h-5 text-amber-600 mx-auto mb-1" />
-              <p className="text-[10px] font-extrabold text-amber-700">Hold Order</p>
-              <p className="text-[8px] text-amber-500 mt-0.5">Save & resume later</p>
-            </button>
-            )}
             {isEditing ? (
               /* Update Order (for editing existing orders) */
               <button onClick={handleUpdateOrder} disabled={submitting !== null || cart.length === 0}
@@ -1580,7 +1579,9 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
               </button>
             ) : (
             <>
-            {/* Print KOT - always hidden if kitchen module disabled */}
+            {/* Print KOT — the ONE action that creates the order and issues its
+                kitchen ticket while the kitchen module is enabled. Hidden when
+                the kitchen module is OFF (Place Order is used in that mode). */}
             {settings.enableKitchen !== false && (
             <button onClick={handlePrintKot} disabled={submitting !== null || (needsTable && !selectedTable)}
               className="p-3 border-2 border-orange-200 rounded-2xl hover:border-[#C85A32] hover:bg-orange-50 transition-all text-center cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
@@ -1589,20 +1590,17 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
               <p className="text-[8px] text-orange-500 mt-0.5">Send to kitchen</p>
             </button>
             )}
-            {/* Save & Pay */}
-            </>
-            )}
-            {/* Save & Pay - only for a NEW order: hidden when editing/resuming
-                (the order exists — Update Order adds to it) so a resumed held
-                order can never spawn a second order + duplicate KOT. Also
-                hidden if the billing module is disabled or the role cannot bill. */}
-            {!isEditing && settings.enableBilling !== false && canBill && (
-            <button onClick={handleSaveAndPay} disabled={submitting !== null}
+            {/* Place Order — only for the kitchen-OFF configuration: creates the
+                order without a kitchen ticket, payment stays with the cashier. */}
+            {settings.enableKitchen === false && (
+            <button onClick={handlePlaceOrder} disabled={submitting !== null || (needsTable && !selectedTable)}
               className="p-3 border-2 border-emerald-200 rounded-2xl hover:border-[#16A34A] hover:bg-emerald-50 transition-all text-center cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
-              <DollarSign className="w-5 h-5 text-emerald-600 mx-auto mb-1" />
-              <p className="text-[10px] font-extrabold text-emerald-700">Save & Pay</p>
-              <p className="text-[8px] text-emerald-500 mt-0.5">Proceed to payment, {currency}{grandTotal.toFixed(0)}</p>
+              <Save className="w-5 h-5 text-emerald-600 mx-auto mb-1" />
+              <p className="text-[10px] font-extrabold text-emerald-700">Place Order</p>
+              <p className="text-[8px] text-emerald-500 mt-0.5">No KOT · pay at cashier, {currency}{grandTotal.toFixed(0)}</p>
             </button>
+            )}
+            </>
             )}
           </div>
         </div>
@@ -1623,9 +1621,8 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
         <div className="px-4 py-2.5 bg-[#16A34A]/10 border-t border-[#16A34A]/20 flex items-center justify-center gap-2">
           <Loader2 className="w-4 h-4 animate-spin text-[#16A34A]" />
           <span className="text-[11px] font-bold text-[#16A34A]">
-            {submitting === 'hold' ? 'Placing on hold...' :
-             submitting === 'kot' ? 'Printing KOT...' :
-             submitting === 'bill' ? 'Saving order...' :
+            {submitting === 'kot' ? 'Printing KOT...' :
+             submitting === 'order' ? 'Placing order...' :
              submitting === 'update' ? 'Updating order...' : 'Processing...'}
           </span>
         </div>
@@ -1636,8 +1633,7 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
         <div className="px-4 py-2.5 bg-emerald-50 border-t border-emerald-200 flex items-center justify-center gap-2">
           <Check className="w-4 h-4 text-emerald-600" />
           <span className="text-[11px] font-bold text-emerald-700">
-            {actionSuccess === 'hold' ? 'Order on hold!' :
-             actionSuccess === 'kot' ? 'KOT printed!' : actionSuccess === 'bill' ? 'Order created!' : 'Order completed!'}
+            {actionSuccess === 'order' ? 'Order created!' : 'Order completed!'}
           </span>
         </div>
       )}
@@ -1681,10 +1677,16 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50 shrink-0">
           <div className="flex items-center gap-2">
-            {!isPageMode && (
+            {(!isPageMode || isTableSession) && (
               <>
-                <button onClick={handleClose} aria-label="Close order wizard" className="p-2 hover:bg-slate-200 rounded-lg text-slate-500 hover:text-slate-700 transition-colors cursor-pointer">
-                  <X className="w-4 h-4" />
+                {/* Overlay: close. Page mode (POS Ordering screen): leave a
+                    handed-over table order and go back to Floors & Tables. */}
+                <button
+                  onClick={isPageMode ? handleExitTableSession : handleClose}
+                  aria-label={isPageMode ? 'Exit table order' : 'Close order wizard'}
+                  className="p-2 hover:bg-slate-200 rounded-lg text-slate-500 hover:text-slate-700 transition-colors cursor-pointer"
+                >
+                  {isPageMode ? <ArrowLeft className="w-4 h-4" /> : <X className="w-4 h-4" />}
                 </button>
                 <div className="h-4 w-px bg-slate-200" />
               </>

@@ -10,16 +10,23 @@
  *      never a broken image), next to the tenant's restaurant name.
  *   2. Floors & Tables → tap an AVAILABLE table → the guest dialog fits inside
  *      the visible viewport.
- *   3. "Open Table" opens the order-entry wizard DIRECTLY ON THE MENU for that
- *      exact table: no Dine In/Take Away step, no floor/table screens, and the
- *      table number shown on Review matches the table that was tapped.
- *   4. The wizard overlay fits the viewport (top ≥ 0, bottom ≤ innerHeight).
- *   5. Closing the wizard releases the background scroll lock.
- *   6. Kitchen Tickets shows no "Checkout Desk" action and keeps the three tabs.
+ *   3. "Open Table" hands the table to the POS ORDERING SCREEN and shows the
+ *      menu INLINE there for that exact table: no separate modal/card overlay,
+ *      no Dine In/Take Away step, no floor/table screens, and the table number
+ *      shown on Review matches the table that was tapped.
+ *   4. That screen fits the viewport (no horizontal overflow) and scrolls
+ *      internally (desktop, tablet and mobile).
+ *   5. Leaving the table order (the in-page exit) returns to Floors & Tables
+ *      and releases the background scroll lock.
+ *   6. Kitchen Tickets shows no "Checkout Desk" action and keeps the Active /
+ *      History tabs (hold orders were removed from the product).
  *   7. No console errors / page exceptions during the whole run.
  *
- * Read-only with respect to order data: no order/KOT is created (the wizard is
- * closed before any submit action) and no existing record is modified.
+ * Read-only with respect to order data: no order/KOT is created (the session is
+ * left before any submit action) and no existing record is modified. The Review
+ * step is also asserted to offer Print KOT / Cancel Order only. The full
+ * workflow INCLUDING a real order submission is covered by
+ * scripts/pos-ordering-open-table-verify.mjs.
  */
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -280,28 +287,24 @@ for (const vp of VIEWPORTS) {
 
   const wizard = await evaluate(`(() => {
     const has = (t) => document.body.innerText.includes(t);
-    const overlay = [...document.querySelectorAll('div')].find(d => d.className && String(d.className).includes('z-[90]'));
-    const card = overlay ? overlay.firstElementChild : null;
-    const box = card ? card.getBoundingClientRect() : null;
+    // Ordering happens ON the POS Ordering screen: the wizard is rendered in
+    // page mode (a screen, not a modal overlay card).
+    const overlays = [...document.querySelectorAll('div')].filter(d => String(d.className || '').includes('z-[90]'));
+    const badge = [...document.querySelectorAll('span')]
+      .find(s => /^Table /.test(s.textContent.trim()) && s.getAttribute('title'));
     return {
+      onBoard: has('Restaurant Floors & Tables'),
       orderTypeStep: has('Choose Order Type'),
       floorStep: has('Select Floor / Area'),
       tableStep: has('Select Table'),
       menuStep: !!(document.querySelector('input[placeholder="Search dishes, categories..."]') || has('No menu items found')),
-      stepIndicator: (document.body.innerText.match(/Menu|Review/g) || []).join(','),
-      card: box ? { top: Math.round(box.top), bottom: Math.round(box.bottom) } : null,
+      overlayCards: overlays.length,
       // NOTE: a regex escape written inside this evaluated template literal
       // would collapse (\s -> s), so plain string matching is used here.
-      headerTable: (() => {
-        const overlays = [...document.querySelectorAll('div')].filter(d => String(d.className || '').includes('z-[90]'));
-        const header = overlays[0]?.querySelector('div');
-        if (!header) return null;
-        const badge = [...header.querySelectorAll('span')]
-          .map(s => s.textContent.trim())
-          .find(t => t.toLowerCase().startsWith('table'));
-        return badge || null;
-      })(),
+      headerTable: badge ? badge.textContent.trim() : null,
+      exitControl: !!document.querySelector('button[aria-label="Exit table order"]'),
       vh: window.innerHeight,
+      horizontalOverflow: document.documentElement.scrollWidth - window.innerWidth,
       bodyLocked: document.body.style.overflow === 'hidden' || document.documentElement.style.overflow === 'hidden',
       scrollableInside: (() => {
         const scrollers = [...document.querySelectorAll('*')].filter(e => {
@@ -312,17 +315,20 @@ for (const vp of VIEWPORTS) {
       })(),
     };
   })()`);
+  check(!wizard.onBoard, 'the POS Ordering screen replaced the Floors & Tables board (one integrated screen)');
+  check(wizard.overlayCards === 0, 'no separate full-screen modal/card overlay is mounted');
   check(!wizard.orderTypeStep, 'no Dine In / Take Away selection step in the Open Table flow');
   check(!wizard.floorStep, 'no floor re-selection in the Open Table flow');
   check(!wizard.tableStep, 'no table re-selection in the Open Table flow');
   check(wizard.menuStep, 'the order-entry menu is shown immediately');
   check(!!wizard.headerTable
     && wizard.headerTable.replace(/[^0-9]/g, '') === (tableInfo.label || '').replace(/[^0-9]/g, ''),
-    `the selector screen shows the tapped table (${wizard.headerTable})`);
-  check(wizard.card && wizard.card.top >= -1 && wizard.card.bottom <= wizard.vh + 1,
-    `wizard overlay fits the viewport (${wizard.card ? `${wizard.card.top}…${wizard.card.bottom} of ${wizard.vh}` : 'n/a'})`);
-  check(wizard.bodyLocked, 'background page scrolling stays locked while the wizard is open');
-  check(wizard.scrollableInside, 'content scrolls INSIDE the wizard (internal scroll container present)');
+    `the ordering screen shows the tapped table (${wizard.headerTable})`);
+  check(wizard.exitControl, 'the full-screen session offers an explicit exit back to Floors & Tables');
+  check(wizard.horizontalOverflow <= 2,
+    `the ordering screen fits the width (${wizard.horizontalOverflow}px overflow at ${vp.w}px)`);
+  check(!wizard.bodyLocked, 'the screen is not left scroll-locked (page mode owns the viewport)');
+  check(wizard.scrollableInside, 'content scrolls INSIDE the ordering screen (internal scroll container present)');
 
   // ── 6. Correct table number is carried into the order ──
   const addedItem = await evaluate(`(() => {
@@ -349,29 +355,44 @@ for (const vp of VIEWPORTS) {
     const t = document.body.innerText;
     const m = t.match(/Table:\\s*([^\\n·]+)/);
     const typeMatch = t.match(/Type\\n?\\s*([a-z ]+)/i);
-    return { table: m ? m[1].trim() : null, text: t.slice(0, 400), type: typeMatch ? typeMatch[1].trim() : null };
+    // Action buttons actually rendered on the Review step.
+    const actions = [...document.querySelectorAll('button')].map(b => b.textContent.trim()).filter(txt => txt.length && txt.length < 60);
+    return {
+      table: m ? m[1].trim() : null,
+      text: t.slice(0, 400),
+      type: typeMatch ? typeMatch[1].trim() : null,
+      hasPrintKot: actions.some(a => /^Print KOT/.test(a)),
+      hasCancel: actions.some(a => /^Cancel Order/.test(a)),
+      hasHold: /Hold Order/.test(t),
+      hasSaveAndPay: /Save & Pay/.test(t),
+    };
   })()`);
+  check(review.hasPrintKot, 'Review offers Print KOT (creates the order + its kitchen ticket)');
+  check(review.hasCancel, 'Review offers Cancel Order');
+  check(!review.hasHold, 'Review offers NO Hold Order action');
+  check(!review.hasSaveAndPay, 'Review offers NO Save & Pay action');
   check(!!review.table, `Review shows the order's table (${review.table})`);
   const tappedNumber = (tableInfo.label || '').replace(/[^0-9]/g, '');
   check(!!review.table && tappedNumber !== '' && review.table.replace(/[^0-9]/g, '') === tappedNumber,
     `the table shown is exactly the one tapped (tapped ${tableInfo.label} → review ${review.table})`);
   check(/dine in/i.test(review.text), 'Review reports the Dine In order type');
 
-  // ── 7. Close the wizard → scroll lock released ──
+  // ── 7. Leave the table order → back on the board, scroll lock released ──
   const closed = await evaluate(`(() => {
-    const b = document.querySelector('button[aria-label="Close order wizard"]');
+    const b = document.querySelector('button[aria-label="Exit table order"]');
     if (!b) return false;
     b.click();
     return true;
   })()`);
-  check(closed, 'the wizard can be closed');
-  await sleep(900);
+  check(closed, 'the table order can be left (exit control is wired)');
+  await sleep(2200);
   const afterClose = await evaluate(`(() => ({
+    onBoard: document.body.innerText.includes('Restaurant Floors & Tables'),
     wizardGone: !document.querySelector('input[placeholder="Search dishes, categories..."]'),
     bodyUnlocked: document.body.style.overflow !== 'hidden' && document.documentElement.style.overflow !== 'hidden',
   }))()`);
-  check(afterClose.wizardGone, 'the wizard is closed');
-  check(afterClose.bodyUnlocked, 'the background scroll lock is released after closing (no stuck page)');
+  check(afterClose.wizardGone && afterClose.onBoard, 'leaving the order returns to the Floors & Tables board');
+  check(afterClose.bodyUnlocked, 'the background scroll lock is released (no stuck page)');
   await sleep(400);
 
   // ── 8. Kitchen Tickets: no Checkout Desk ──
@@ -385,11 +406,13 @@ for (const vp of VIEWPORTS) {
     visible: !!document.querySelector('input[placeholder="Search tickets..."]')
       || document.body.innerText.includes('Kitchen Tickets'),
     checkoutDesk: document.body.innerText.includes('Checkout Desk'),
-    tabs: ['Active', 'On Hold', 'History'].filter(t => document.body.innerText.includes(t)),
+    tabs: ['Active', 'History'].filter(t => document.body.innerText.includes(t)),
+    hasOnHoldTab: /On Hold/.test(document.body.innerText),
   }))()`);
   check(kitchen.visible, 'Kitchen Tickets screen is reachable');
   check(!kitchen.checkoutDesk, 'no "Checkout Desk" action is rendered for the kitchen');
-  check(kitchen.tabs.length === 3, `Active / On Hold / History tabs present (${kitchen.tabs.join(', ')})`);
+  check(kitchen.tabs.length === 2, `Active / History tabs present (${kitchen.tabs.join(', ')})`);
+  check(!kitchen.hasOnHoldTab, 'no On Hold tab is rendered (hold orders removed)');
 }
 
 // ═══════════════════════════════════════════════════════════════════════

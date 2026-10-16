@@ -67,6 +67,26 @@ export function resolveAvailableOrderTypes({ role, assignedOrderTypes, grantLoad
 }
 
 /**
+ * The ONE integrated order-entry screen for the tenant's business mode.
+ *
+ * Table selection (Floor → Table) and menu ordering live on the SAME screen,
+ * so the Floors & Tables board hands a tapped table over to THIS screen
+ * (POS Ordering → TakeOrderWizard rendered in "page" mode by NewOrderPage)
+ * instead of opening a separate modal/card overlay.
+ *
+ * @param {object} settings restaurant settings (businessMode)
+ * @returns {'new_order'|null} 'new_order' in restaurant mode — the only mode
+ *   with a floors/tables workflow (floors/tables capability belongs to the
+ *   restaurant verticals). null means the tenant has no dedicated order-entry
+ *   screen, so callers keep their existing fallback instead of navigating to a
+ *   screen that is blocked for the mode (AppShell guards would show Unauthorized).
+ */
+export function resolveOrderEntryScreen(settings) {
+  const mode = String(settings?.businessMode || '').toLowerCase();
+  return mode === 'restaurant' ? 'new_order' : null;
+}
+
+/**
  * Resolve the floors the user may see/select in the wizard.
  *
  * @param {Array}  floors            floors returned by GET /users/me/floors

@@ -1,9 +1,12 @@
 /**
- * Cashier checkout — real-browser verification.
+ * Order creation + cashier checkout — real-browser verification.
  *
- * Confirms the checkout workflow is UNCHANGED by this work:
- *   Floors & Tables → Open Table → Menu → add an item → "Save & Pay"
- *   → the order is created AND the cashier payment overlay opens.
+ * Confirms the workflow that REPLACED the removed "Save & Pay" action:
+ *   Floors & Tables → Open Table → Menu → add an item → Review
+ *   → "Print KOT" creates the order AND its kitchen ticket (exactly one),
+ *   → the cashier then collects payment from Active Orders (existing overlay).
+ *
+ * It also asserts the Review step offers NO Hold Order and NO Save & Pay.
  *
  * The verification order is cleaned up at the end (cancel + void its KOTs +
  * soft-delete so the table is released), leaving no active test data behind.
@@ -138,24 +141,30 @@ await evaluate(`(() => {
 })()`);
 await sleep(800);
 
-// Save & Pay must still be available for a NEW order
-const savePay = await evaluate(`(() => {
-  const b = [...document.querySelectorAll('button')].find(x => x.textContent.includes('Save & Pay'));
-  if (!b) return { found: false };
-  b.click();
-  return { found: true };
-})()`);
-check(savePay.found, 'the Save & Pay action is available for a new table order');
-await sleep(3500);
-
-const overlay = await evaluate(`(() => {
+// The Review step must offer Print KOT / Cancel Order only.
+const reviewActions = await evaluate(`(() => {
   const t = document.body.innerText;
   return {
-    payment: /PAYMENT|Collect Payment|Amount Received|Cash/i.test(t),
-    orderCreated: /Order .*created|Proceed to payment/i.test(t),
+    printKot: !!([...document.querySelectorAll('button')].find(x => /^Print KOT/.test(x.textContent.trim()))),
+    cancel: !!([...document.querySelectorAll('button')].find(x => /^Cancel Order/.test(x.textContent.trim()))),
+    hold: /Hold Order/.test(t),
+    savePay: /Save & Pay/.test(t),
   };
 })()`);
-check(overlay.payment, 'the cashier payment overlay opened (checkout workflow intact)');
+check(reviewActions.printKot, 'Print KOT is available for a new table order');
+check(reviewActions.cancel, 'Cancel Order is available');
+check(!reviewActions.hold, 'no Hold Order action is offered any more');
+check(!reviewActions.savePay, 'no Save & Pay action is offered any more');
+
+// Clicking Print KOT must create the order AND its kitchen ticket exactly once.
+const clickedKot = await evaluate(`(() => {
+  const b = [...document.querySelectorAll('button')].find(x => /^Print KOT/.test(x.textContent.trim()));
+  if (!b) return false;
+  b.click();
+  return true;
+})()`);
+check(clickedKot, 'Print KOT was clicked');
+await sleep(3500);
 
 // Find the created order for this table, then clean up.
 const active = await api('GET', '/orders/active', undefined, token);
@@ -165,6 +174,49 @@ check(!!created, `the order was persisted for table ${table.tableNo} (#${created
 const kots = await api('GET', '/kot', undefined, token);
 const orderKots = (kots?.data || []).filter((k) => Number(k.orderId) === Number(created?.id));
 check(orderKots.length === 1, `exactly one KOT exists for the order (got ${orderKots.length})`);
+check(((orderKots[0]?.kotItems) || []).length >= 1, 'the ticket carries the ordered item');
+
+// A retry (double click / refresh) must never create a second ticket.
+await api('POST', '/kot', { orderId: created?.id }, token);
+const kotsRetry = await api('GET', '/kot', undefined, token);
+const orderKotsRetry = (kotsRetry?.data || []).filter((k) => Number(k.orderId) === Number(created?.id));
+check(orderKotsRetry.length === 1, `a KOT retry created no duplicate (still ${orderKotsRetry.length})`);
+
+// Payment continues through the existing cashier checkout: Active Orders → Bill.
+// The KOT print preview opens a child window whose print() call can block the
+// page renderer in headless mode, so the SPA is reloaded first (a navigation
+// closes that dialog) before driving the cashier screen.
+await send('Page.navigate', { url: DEV });
+await sleep(4500);
+const navOrders = await evaluate(`(() => {
+  const b = [...document.querySelectorAll('button[title]')].find(x => x.getAttribute('title') === 'Active Orders');
+  if (b) { b.click(); return 'rail'; }
+  const burger = document.querySelector('button[aria-label="Open navigation menu"]');
+  if (burger) { burger.click(); return 'drawer-open'; }
+  return 'not-found';
+})()`);
+if (navOrders === 'drawer-open') {
+  await sleep(700);
+  await evaluate(`(() => {
+    const b = [...document.querySelectorAll('button[title]')].find(x => x.getAttribute('title') === 'Active Orders');
+    if (b) b.click();
+    return !!b;
+  })()`);
+}
+await sleep(2500);
+const billClicked = await evaluate(`(() => {
+  const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Bill');
+  if (!b) return false;
+  b.click();
+  return true;
+})()`);
+check(billClicked, 'the cashier Bill action is available on the order card');
+await sleep(2500);
+const overlay = await evaluate(`(() => {
+  const t = document.body.innerText;
+  return { payment: /PAYMENT|Collect Payment|Amount Received|Cash/i.test(t) };
+})()`);
+check(overlay.payment, 'the cashier payment overlay opened (checkout workflow intact)');
 
 if (created) {
   await api('PATCH', `/orders/${created.id}/cancel`, { reason: 'QA checkout verification cleanup' }, token);

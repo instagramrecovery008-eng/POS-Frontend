@@ -3,22 +3,28 @@
  *
  * A KOT carries BOTH its own status (`KOT.status` / `cancelledAt`, set by the
  * kitchen workflow) and its parent order's status (`order.status`, set by the
- * POS/cashier workflow, e.g. HOLD / CANCELLED / COMPLETED). Reading only one of
- * them made a held ticket show up as Active AND On Hold at the same time.
+ * POS/cashier workflow, e.g. CANCELLED / COMPLETED). Reading only one of them
+ * used to make a ticket show up in two tabs at the same time.
  *
- * The three buckets are therefore MUTUALLY EXCLUSIVE and derived from the
- * stored values (`kotTabFor`), so the same ticket can never appear twice:
+ * The two buckets are therefore MUTUALLY EXCLUSIVE and derived from the stored
+ * values (`kotTabFor`), so the same ticket can never appear twice:
  *
  *   History  — voided (KOT cancelled) or served KOT, or a closed order
- *   On Hold  — still-open ticket whose ORDER is on hold
  *   Active   — everything else that is still open
  *
+ * Hold orders were removed from the product, so there is no "On Hold" tab. A
+ * LEGACY row still stored as `order.status = 'HOLD'` (created before the
+ * removal) is an open ticket with a live KOT: it is classified as Active so it
+ * can never silently disappear from the kitchen. Nothing here writes data —
+ * the admin recovery script (backend `npm run release:held-orders`) is the only
+ * place that normalizes such a legacy status.
+ *
  * Both /api/kot payloads (`order.status`) and optimistic socket payloads are
- * handled: a missing field simply falls through to the "still open" branches
+ * handled: a missing field simply falls through to the "still open" branch
  * instead of throwing.
  */
 
-export const KOT_TABS = ['Active', 'On Hold', 'History'];
+export const KOT_TABS = ['Active', 'History'];
 
 /** Voided: the ticket itself was cancelled (either flag may be set). */
 export function isVoidedKot(kot) {
@@ -36,28 +42,22 @@ export function isClosedOrderKot(kot) {
   return status === 'CANCELLED' || status === 'COMPLETED';
 }
 
-/** The parent order is parked (POS "Hold Order"). */
-export function isHeldKot(kot) {
-  return kot?.order?.status === 'HOLD';
-}
-
 /**
  * Resolve the single tab a ticket belongs to.
- * @returns {'Active'|'On Hold'|'History'}
+ * @returns {'Active'|'History'}
  */
 export function kotTabFor(kot) {
   if (isVoidedKot(kot) || isServedKot(kot) || isClosedOrderKot(kot)) return 'History';
-  if (isHeldKot(kot)) return 'On Hold';
   return 'Active';
 }
 
 /**
- * Split a KOT list into the three mutually exclusive tab buckets.
+ * Split a KOT list into the two mutually exclusive tab buckets.
  * @param {Array} kots
- * @returns {{ Active: Array, 'On Hold': Array, History: Array }}
+ * @returns {{ Active: Array, History: Array }}
  */
 export function groupKotsByTab(kots) {
-  const buckets = { Active: [], 'On Hold': [], History: [] };
+  const buckets = { Active: [], History: [] };
   (Array.isArray(kots) ? kots : []).forEach((kot) => {
     buckets[kotTabFor(kot)].push(kot);
   });

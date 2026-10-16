@@ -191,12 +191,6 @@ const MODULE_TOGGLES = [
     modes: ['restaurant', 'hybrid'],
   },
   {
-    key: 'enableHoldOrders',
-    label: 'Enable Hold Orders',
-    description: 'If OFF: Hide Hold button in Order Wizard and Hold tab in Orders screen',
-    modes: ['restaurant', 'hybrid'],
-  },
-  {
     key: 'enableAddItem',
     label: 'Enable Add Item',
     description: 'If OFF: Occupied tables cannot receive additional items. If ON: Open Existing Order → Add Items → Generate New KOT → Update Existing Bill',

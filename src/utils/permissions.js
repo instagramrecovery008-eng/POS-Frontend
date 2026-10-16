@@ -335,8 +335,8 @@ export const resolveStaffPermissions = (role, overrides = [], settings = {}, sub
   // Role action defaults (mirroring the backend role defaults, restricted to
   // the role's screens so a screen the role cannot see never grants actions).
   const ACTION_ROLE_DEFAULTS = {
-    MANAGER: ['orders.create', 'orders.add_item', 'orders.print_kot', 'orders.hold', 'orders.resume', 'orders.cancel', 'orders.transfer', 'orders.merge', 'orders.split', 'billing.view', 'billing.collect', 'billing.print', 'billing.reprint', 'billing.discount', 'menu.create', 'menu.edit', 'menu.delete', 'category.manage', 'subcategory.manage', 'menu.stock', 'staff.create', 'staff.edit', 'staff.status', 'staff.password', 'reports.sales', 'reports.payments', 'reports.staff', 'reports.management', 'reports.export', 'settings.edit', 'settings.kitchen'],
-    CASHIER: ['orders.create', 'orders.add_item', 'orders.hold', 'orders.resume', 'billing.view', 'billing.collect', 'billing.print', 'billing.reprint', 'reports.sales'],
+    MANAGER: ['orders.create', 'orders.add_item', 'orders.print_kot', 'orders.cancel', 'orders.transfer', 'orders.merge', 'orders.split', 'billing.view', 'billing.collect', 'billing.print', 'billing.reprint', 'billing.discount', 'menu.create', 'menu.edit', 'menu.delete', 'category.manage', 'subcategory.manage', 'menu.stock', 'staff.create', 'staff.edit', 'staff.status', 'staff.password', 'reports.sales', 'reports.payments', 'reports.staff', 'reports.management', 'reports.export', 'settings.edit', 'settings.kitchen'],
+    CASHIER: ['orders.create', 'orders.add_item', 'billing.view', 'billing.collect', 'billing.print', 'billing.reprint', 'reports.sales'],
     KITCHEN: ['orders.add_item'],
     WAITER: ['orders.create', 'orders.add_item', 'orders.print_kot'],
   };
