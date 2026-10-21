@@ -96,9 +96,14 @@ export const ACTION_PERMISSIONS = {
   'discount.view': [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.MANAGER],
   'discount.apply': [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.MANAGER, ROLES.CASHIER],
   
-  // Staff Actions
-  'staff.create': [ROLES.SUPER_ADMIN, ROLES.ADMIN],
+  // Staff Actions — mirrors the backend permission keys (utils/permissions.js):
+  // MANAGER may manage operational staff (view/create/edit/status/password)
+  // but never delete staff or change a role (ADMIN-only).
+  'staff.view': [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.MANAGER],
+  'staff.create': [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.MANAGER],
   'staff.edit': [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.MANAGER],
+  'staff.status': [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.MANAGER],
+  'staff.password': [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.MANAGER],
   'staff.delete': [ROLES.SUPER_ADMIN, ROLES.ADMIN],
   'staff.change_role': [ROLES.SUPER_ADMIN, ROLES.ADMIN],
   

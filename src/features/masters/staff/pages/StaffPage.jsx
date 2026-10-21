@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Plus, Search, X, Edit, Trash, RefreshCw, AlertTriangle, Loader2, Key, Shield, MapPin } from 'lucide-react';
-import { useUiStore, useSettingsStore } from '../../../../store';
+import { useUiStore, useSettingsStore, useAuthStore } from '../../../../store';
 import { userApi } from '../../../../api/user.api';
 import { floorApi } from '../../../../api/floor.api';
 import ConfirmationDialog from '../../../../components/ConfirmationDialog';
@@ -35,6 +35,16 @@ const ALL_STAFF_ROLE_OPTIONS = ['MANAGER', 'CASHIER', 'KITCHEN', 'WAITER'];
 
 export default function StaffPage() {
   const { addToast } = useUiStore();
+  // ── Effective staff-permission matrix (backend keys; ADMIN always true) ──
+  // Controls are rendered ONLY when the current user holds the matching
+  // permission, and every endpoint re-checks it server-side — hidden UI and
+  // backend enforcement use the same keys, so they cannot disagree.
+  const hasPermission = useAuthStore((s) => s.hasPermission);
+  const canAddStaff = hasPermission('staff.create');
+  const canEditStaff = hasPermission('staff.edit');
+  const canChangeStatus = hasPermission('staff.status');
+  const canDeleteStaff = hasPermission('staff.delete');
+  const canResetPassword = hasPermission('staff.password');
   // §5: floor/order-mode assignments only apply to table-capable businesses.
   const { settings } = useSettingsStore();
   const capabilities = settings.capabilities || getBusinessCapabilities(settings.businessType);
@@ -293,6 +303,11 @@ export default function StaffPage() {
   };
 
   const handleOpenReset = (member) => {
+    // Client-side guard mirrors the backend permission (never the only gate).
+    if (!canResetPassword) {
+      addToast('You do not have permission to reset staff passwords.', 'error');
+      return;
+    }
     setResetStaffMember(member);
     setResetPass('');
     setResetPassConfirm('');
@@ -303,6 +318,11 @@ export default function StaffPage() {
 
   const handleResetPasswordSubmit = async (e) => {
     e.preventDefault();
+    if (resetPassSubmitting) return; // duplicate-submit guard
+    if (!canResetPassword) {
+      setResetPassError('You do not have permission to reset staff passwords. Ask an administrator.');
+      return;
+    }
     setResetPassError('');
     setResetPassSuccess('');
 
@@ -383,10 +403,12 @@ export default function StaffPage() {
           <button onClick={() => { cachedStaffFetched = 0; loadStaff(true); }} className="p-2 hover:bg-slate-100 rounded-lg" title="Refresh">
             <RefreshCw className={`w-4 h-4 text-slate-500 ${loading ? 'animate-spin' : ''}`} />
           </button>
-          <button onClick={() => { resetForm(); setShowModal(true); }}
-            className="h-8.5 px-3 bg-[#16A34A] hover:bg-[#15803D] text-white font-bold rounded-xl text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-xs transition-all cursor-pointer">
-            <Plus className="w-4 h-4" /> Add Staff
-          </button>
+          {canAddStaff && (
+            <button onClick={() => { resetForm(); setShowModal(true); }}
+              className="h-8.5 px-3 bg-[#16A34A] hover:bg-[#15803D] text-white font-bold rounded-xl text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-xs transition-all cursor-pointer">
+              <Plus className="w-4 h-4" /> Add Staff
+            </button>
+          )}
         </div>
       </div>
 
@@ -460,25 +482,40 @@ export default function StaffPage() {
                 </div>
               )}
               <div className="mt-2.5 pt-2.5 border-t border-slate-100 flex items-center justify-between">
-                <button onClick={() => handleToggleStatus(member.id, member.status)}
-                  className={`text-[9px] font-bold px-2 py-0.5 rounded-full transition-all cursor-pointer ${
-                    member.status === 'On Shift' ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200' :
+                {canChangeStatus ? (
+                  <button onClick={() => handleToggleStatus(member.id, member.status)}
+                    className={`text-[9px] font-bold px-2 py-0.5 rounded-full transition-all cursor-pointer ${
+                      member.status === 'On Shift' ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200' :
+                      member.status === 'On Break' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-500'
+                    }`}>{member.status}</button>
+                ) : (
+                  <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                    member.status === 'On Shift' ? 'bg-emerald-100 text-emerald-800' :
                     member.status === 'On Break' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-500'
-                  }`}>{member.status}</button>
+                  }`}>{member.status}</span>
+                )}
                 <div className="flex gap-1">
-                  <button onClick={() => setPermissionsMember(member)}
-                    className="p-1 bg-slate-100 hover:bg-emerald-100 rounded text-slate-500 cursor-pointer" title="Permissions"><Shield className="w-3.5 h-3.5" /></button>
+                  {canEditStaff && (
+                    <button onClick={() => setPermissionsMember(member)}
+                      className="p-1 bg-slate-100 hover:bg-emerald-100 rounded text-slate-500 cursor-pointer" title="Permissions"><Shield className="w-3.5 h-3.5" /></button>
+                  )}
                   {/* Assign Floors (Part 10) — ADMIN (restaurant-wide) and SUPER_ADMIN are not assignable.
                       §5: hidden entirely for non-table (retail) businesses. */}
-                  {member.role !== 'ADMIN' && showFloorAccess && (
+                  {canEditStaff && member.role !== 'ADMIN' && showFloorAccess && (
                     <button onClick={() => setFloorsMember(member)}
                       className="p-1 bg-slate-100 hover:bg-sky-100 rounded text-slate-500 cursor-pointer" title="Assign Floors"><MapPin className="w-3.5 h-3.5" /></button>
                   )}
-                  <button onClick={() => { setEditingId(member.id); setFirstName(member.firstName); setLastName(member.lastName); setRole(member.backendRole || role); setPhone(member.phone || ''); setEmail(member.email || ''); setShowModal(true); }}
-                    className="p-1 bg-slate-100 hover:bg-emerald-100 rounded text-slate-500 cursor-pointer" title="Edit"><Edit className="w-3.5 h-3.5" /></button>
-                  <button onClick={() => handleOpenReset(member)}
-                    className="p-1 bg-slate-100 hover:bg-amber-100 rounded text-slate-500 cursor-pointer" title="Reset Password"><Key className="w-3.5 h-3.5" /></button>
-                  <button onClick={() => setDeleteTarget(member)} className="p-1 bg-slate-100 hover:bg-red-100 text-slate-500 rounded cursor-pointer" title="Delete"><Trash className="w-3.5 h-3.5" /></button>
+                  {canEditStaff && (
+                    <button onClick={() => { setEditingId(member.id); setFirstName(member.firstName); setLastName(member.lastName); setRole(member.backendRole || role); setPhone(member.phone || ''); setEmail(member.email || ''); setShowModal(true); }}
+                      className="p-1 bg-slate-100 hover:bg-emerald-100 rounded text-slate-500 cursor-pointer" title="Edit"><Edit className="w-3.5 h-3.5" /></button>
+                  )}
+                  {canResetPassword && (
+                    <button onClick={() => handleOpenReset(member)}
+                      className="p-1 bg-slate-100 hover:bg-amber-100 rounded text-slate-500 cursor-pointer" title="Reset Password"><Key className="w-3.5 h-3.5" /></button>
+                  )}
+                  {canDeleteStaff && (
+                    <button onClick={() => setDeleteTarget(member)} className="p-1 bg-slate-100 hover:bg-red-100 text-slate-500 rounded cursor-pointer" title="Delete"><Trash className="w-3.5 h-3.5" /></button>
+                  )}
                 </div>
               </div>
             </div>

@@ -29,6 +29,7 @@ export default function RestaurantForm({ restaurant, onClose, onSaved }) {
     mobile: restaurant?.phone || '',
     gstNumber: restaurant?.gstNumber || '',
     fssaiNumber: restaurant?.fssaiNumber || '',
+    website: restaurant?.website || '',
     address: restaurant?.address || '',
     country: restaurant?.country || 'India',
     state: restaurant?.state || '',
@@ -88,6 +89,7 @@ export default function RestaurantForm({ restaurant, onClose, onSaved }) {
           mobile: form.mobile,
           gstNumber: form.gstNumber || undefined,
           fssaiNumber: form.fssaiNumber || undefined,
+          website: form.website || undefined,
           address: form.address || undefined,
           country: form.country,
           state: form.state || undefined,
@@ -178,6 +180,10 @@ export default function RestaurantForm({ restaurant, onClose, onSaved }) {
               <div className="space-y-1">
                 <label className="text-[10px] font-bold text-slate-600">FSSAI Number</label>
                 <input value={form.fssaiNumber} onChange={e => handleChange('fssaiNumber', e.target.value)} className="w-full h-9 px-3 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold outline-none focus:border-[#16A34A]" />
+              </div>
+              <div className="space-y-1 col-span-2">
+                <label className="text-[10px] font-bold text-slate-600">Website</label>
+                <input value={form.website} onChange={e => handleChange('website', e.target.value)} placeholder="https://example.com" className="w-full h-9 px-3 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold outline-none focus:border-[#16A34A]" />
               </div>
               <div className="space-y-1 col-span-2">
                 <label className="text-[10px] font-bold text-slate-600">Address</label>

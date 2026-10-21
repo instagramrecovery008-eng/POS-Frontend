@@ -322,8 +322,15 @@ const useSettingsStore = create((set, get) => ({
               customLogo: s.logo || '',
               receiptLogo: s.logo || base.branding.receiptLogo,
               invoiceLogo: s.logo || base.branding.invoiceLogo,
+              // Owner name is a MASTER business-profile field (no tenant
+              // column) — the server value wins over any cached UI snapshot.
+              ownerName: s.ownerName !== undefined ? (s.ownerName || '') : (base.branding.ownerName || ''),
             },
             // Restaurant info
+            // Shared business-profile fields come from the authoritative
+            // platform record merged into the settings response. When the
+            // backend returns a value (including an intentional empty string),
+            // it overrides the local cache so stale values can never win.
             gstNumber: s.gstNumber || base.gstNumber,
             fssaiNumber: s.fssaiNumber || base.fssaiNumber,
             gstPercentage: Number(s.taxPercentage ?? base.gstPercentage),
@@ -332,6 +339,10 @@ const useSettingsStore = create((set, get) => ({
             contactNumber: s.phone || base.contactNumber,
             email: s.email || base.email,
             website: s.website || base.website,
+            city: s.city !== undefined ? (s.city || '') : (base.city || ''),
+            state: s.state !== undefined ? (s.state || '') : (base.state || ''),
+            country: s.country !== undefined ? (s.country || '') : (base.country || ''),
+            postalCode: s.pincode !== undefined ? (s.pincode || '') : (base.postalCode || ''),
             
             // Billing
             receiptFooterMessage: s.receiptFooter || base.receiptFooterMessage,
@@ -492,6 +503,15 @@ const useSettingsStore = create((set, get) => ({
       // Build payload for backend - all supported fields
       const apiPayload = {
         restaurantName: s.branding.restaurantName,
+        // ── Shared business-profile fields (authoritative platform record) ──
+        // ownerName/city/state/country/pincode have no tenant column; the API
+        // validates and persists them on the master business record, then
+        // mirrors the shared subset into this tenant's settings.
+        ownerName: s.branding.ownerName || '',
+        city: s.city || '',
+        state: s.state || '',
+        country: s.country || '',
+        pincode: s.postalCode || '',
         gstNumber: s.gstNumber,
         fssaiNumber: s.fssaiNumber,
         phone: s.contactNumber,
