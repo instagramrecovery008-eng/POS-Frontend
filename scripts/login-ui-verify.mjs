@@ -80,7 +80,9 @@ const send = (method, params = {}) => new Promise((res) => {
 const evaluate = async (expr) => {
   const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
   if (r.result?.exceptionDetails) {
-    return { __error: r.result.exceptionDetails.exception?.description || r.result.exceptionDetails.text };
+    const err = r.result.exceptionDetails.exception?.description || r.result.exceptionDetails.text;
+    console.log('  ! evaluate failed: ' + String(err).split('\n')[0]);
+    return { __error: err };
   }
   return r.result?.result?.value;
 };
@@ -112,7 +114,18 @@ async function freshLoginScreen(vp) {
   await send('Emulation.setDeviceMetricsOverride', { width: vp.w, height: vp.h, deviceScaleFactor: 1, mobile: !!vp.mobile });
   await evaluate(`localStorage.clear(); true`);
   await send('Page.reload', { ignoreCache: true });
-  await sleep(3800);
+  // Vite serves modules on demand, so a cold reload can take several seconds.
+  // Wait for the login form itself rather than guessing a fixed delay.
+  for (let i = 0; i < 60; i++) {
+    await sleep(500);
+    const ready = await evaluate(`!!document.querySelector(${JSON.stringify(PASSWORD_SELECTOR)})`);
+    if (ready === true) {
+      await sleep(600); // settle branding/products fetches
+      return;
+    }
+  }
+  console.log('  ! login form never rendered — page text: '
+    + String(await evaluate(`document.body ? document.body.textContent.slice(0, 160) : '(no body)'`)));
 }
 
 // ═══════════════════════════════════════════════
@@ -137,8 +150,57 @@ const layout = await evaluate(`(() => {
     asideVisible: as ? as.display !== 'none' && aside.getBoundingClientRect().width > 0 : false,
     gradient: as ? /gradient/.test(as.backgroundImage) : false,
     // textContent (not innerText): several labels are uppercased by CSS only.
-    brandPoints: ['Floors & tables in real time', 'Kitchen tickets the moment an order lands', 'Sales, stock and staff in one place']
+    // The four KlarGo POS feature cards.
+    brandPoints: ['Orders and billing', 'Floors, tables and kitchen tickets', 'Inventory, menu and staff', 'Sales reports and analytics']
       .filter(t => document.body.textContent.includes(t)).length,
+    // Panel order: KlarGo POS identity first, Infinixo attribution last.
+    orderOk: (() => {
+      const text = document.body.textContent;
+      const klar = text.indexOf('KlarGo POS');
+      const infin = text.indexOf('A product by Infinixo Technologies');
+      const head = text.indexOf('Your restaurant operations, all in one place.');
+      return klar >= 0 && head > klar && infin > head;
+    })(),
+    // Feature cards must be a 2-column grid on desktop.
+    featureCols: (() => {
+      const card = [...document.querySelectorAll('aside div')].find(el => el.className.includes('grid') && el.textContent.includes('Orders and billing'));
+      if (!card) return 0;
+      return getComputedStyle(card).gridTemplateColumns.split(' ').filter(Boolean).length;
+    })(),
+    // Our Products: compact rectangular cards, each product exactly once.
+    productCards: (() => {
+      const strip = [...document.querySelectorAll('aside div')].find(el => /overflow-x-auto/.test(el.className) && el.querySelectorAll('a').length > 0);
+      if (!strip) return { count: 0, names: [], rectangular: null };
+      const cards = [...strip.querySelectorAll('a')];
+      const boxes = cards.map(c => c.getBoundingClientRect());
+      return {
+        count: cards.length,
+        names: cards.map(c => c.textContent.trim().slice(0, 24)),
+        klarCount: cards.filter(c => c.textContent.includes('KlarGo POS')).length,
+        rectangular: boxes.every(b => b.width > b.height * 1.4),
+        insideContainer: boxes.every(b => b.height <= strip.getBoundingClientRect().height + 1),
+      };
+    })(),
+    scrollHeight: document.documentElement.scrollHeight,
+    companyLogo: (() => {
+      const i = [...document.querySelectorAll('img')].find(x => /infinixo/i.test(x.getAttribute('src') || ''));
+      if (!i) return null;
+      const r = i.getBoundingClientRect();
+      const shell = i.parentElement.getBoundingClientRect();
+      return {
+        loaded: i.complete && i.naturalWidth > 0,
+        fit: getComputedStyle(i).objectFit,
+        w: Math.round(r.width), h: Math.round(r.height),
+        contained: r.width <= shell.width + 1 && r.height <= shell.height + 1,
+        ratio: +(i.naturalWidth / i.naturalHeight).toFixed(3),
+        shownRatio: r.height ? +(r.width / r.height).toFixed(3) : null,
+      };
+    })(),
+    attribution: (() => {
+      const a = [...document.querySelectorAll('a')].find(x => x.textContent.includes('A product by Infinixo Technologies'));
+      return a ? { href: a.getAttribute('href'), rel: a.getAttribute('rel'), target: a.getAttribute('target') } : null;
+    })(),
+    ourProducts: document.body.textContent.includes('Our Products'),
     bodyText: document.body.textContent,
     markBoxes,
     tenantImg: tenantImg ? { src: tenantImg.getAttribute('src'), loaded: tenantImg.complete && tenantImg.naturalWidth > 0, fit: getComputedStyle(tenantImg).objectFit } : null,
@@ -158,9 +220,28 @@ const layout = await evaluate(`(() => {
 
 check(layout.hasAside && layout.asideVisible, 'the desktop brand panel is rendered');
 check(layout.gradient, 'the brand panel uses the green gradient theme');
-check(layout.brandPoints === 3, `the panel states what the POS does (${layout.brandPoints}/3 points)`);
+check(layout.brandPoints === 4, `the four KlarGo POS feature cards are present (${layout.brandPoints}/4)`);
+check(layout.companyLogo && layout.companyLogo.loaded, 'the official Infinixo company logo loads');
+check(layout.companyLogo ? layout.companyLogo.fit === 'contain' : false, 'the company logo is contained (object-contain)');
+check(layout.companyLogo ? layout.companyLogo.contained : false,
+  `the company logo never overflows its container (${layout.companyLogo?.w}×${layout.companyLogo?.h})`);
+check(layout.companyLogo ? Math.abs(layout.companyLogo.ratio - layout.companyLogo.shownRatio) < 0.02 : false,
+  `the company logo keeps its aspect ratio (natural ${layout.companyLogo?.ratio} vs shown ${layout.companyLogo?.shownRatio})`);
+check(!!layout.attribution && /infinixotech\.com/.test(layout.attribution.href || ''),
+  `"A product by Infinixo Technologies" links to the company website (${layout.attribution?.href})`);
+check(!!layout.attribution && /noopener/.test(layout.attribution.rel || '') && layout.attribution.target === '_blank',
+  'the company link opens safely (noopener, new tab)');
 check(layout.bodyText.includes('KlarGo POS'), 'KlarGo POS branding is retained');
-check(layout.bodyText.includes('By Infinixo Technologies'), 'the platform vendor line is retained');
+check(layout.bodyText.includes('Infinixo Technologies'), 'the company identity is retained');
+check(layout.bodyText.includes('Your restaurant operations, all in one place.'), 'the product headline is rendered');
+check(layout.bodyText.includes('Smart restaurant operations, billing, inventory and team management'), 'the product subtitle is rendered');
+check(layout.orderOk, 'panel order: KlarGo POS → headline → … → Infinixo attribution last');
+check(layout.featureCols === 2, `feature cards use a 2-column grid (${layout.featureCols} tracks)`);
+check(layout.productCards.count > 0, `the products strip renders ${layout.productCards.count} card(s)`);
+check(layout.productCards.klarCount <= 1, `KlarGo POS is not duplicated in the strip (${layout.productCards.klarCount})`);
+check(layout.productCards.rectangular !== false, 'product cards are rectangular (wider than tall)');
+check(layout.productCards.insideContainer !== false, 'product cards stay inside the strip container');
+check(layout.scrollHeight <= layout.vh + 2, `the desktop page does not scroll vertically (${layout.scrollHeight} ≤ ${layout.vh})`);
 check(layout.markBoxes.length > 0 && layout.markBoxes.every((m) => m.loaded),
   `the KlarGo mark loads (${layout.markBoxes.map((m) => m.src.split('/').pop()).join(', ')})`);
 check(layout.markBoxes.every((m) => m.fit === 'contain'), 'the platform mark is contained (never stretched)');
@@ -169,7 +250,7 @@ check(layout.tenantImg ? layout.tenantImg.loaded : true,
   `the tenant logo loads${layout.tenantImg ? ` (${layout.tenantImg.src.split('/').pop()})` : ' (none configured → initial fallback)'}`);
 check(layout.tenantImg ? layout.tenantImg.fit === 'contain' : true, 'the tenant logo is contained — no cropping of a non-square logo');
 check(layout.tenantNameShown !== false, `the tenant name is shown (${tenantName || 'fallback'})`);
-check(layout.bodyText.includes('Terminal secure login'), 'the terminal login context is stated');
+check((await evaluate(`!!document.querySelector('#remember-me')`)), 'the Remember Me checkbox is present');
 check(layout.emailField && layout.emailIcon, 'the email/user-id field renders with an icon');
 check(!!layout.passwordField && layout.passwordField.icon, 'the password field renders with an icon');
 check(layout.passwordField?.type === 'password', 'the password is masked by default');
@@ -250,7 +331,7 @@ const authError = await evaluate(`(() => {
     fieldsEnabled: !document.querySelector(${JSON.stringify(PASSWORD_SELECTOR)}).disabled,
   };
 })()`);
-check(authError.hasAlert, `invalid credentials surface an authentication error (${authError.text.slice(0, 60)})`);
+check(authError.hasAlert, `invalid credentials surface an authentication error (${(authError?.text || '').slice(0, 60)})`);
 check(authError.buttonBack, 'the button returns to its normal state after the failure');
 check(authError.stillOnLogin, 'a failed login stays on the login screen');
 check(authError.fieldsEnabled, 'the fields are re-enabled after the failure');
@@ -283,10 +364,51 @@ check(loggedIn.token, 'the session token is stored (session established)');
 check(/Dashboard|POS Ordering|Active Orders/.test(loggedIn.shellText), `the shell rendered its navigation (${loggedIn.shellText.split('\n').slice(0, 3).join(' / ')})`);
 
 // ═══════════════════════════════════════════════
+//  1b. Desktop sizes — whole page fits 100dvh
+// ═══════════════════════════════════════════════
+for (const vp of [
+  { name: '1440×900', w: 1440, h: 900 },
+  { name: '1366×768', w: 1366, h: 768 },
+  { name: '1280×720', w: 1280, h: 720 },
+]) {
+  section(`Desktop ${vp.name} — fits the viewport`);
+  await freshLoginScreen({ ...vp, mobile: false });
+  const fit = await evaluate(`(() => {
+    const doc = document.documentElement;
+    const card = document.querySelector('form')?.closest('div[class*="rounded-2xl"]');
+    const cardBox = card ? card.getBoundingClientRect() : null;
+    const attribution = [...document.querySelectorAll('a')].find(a => a.textContent.includes('A product by Infinixo Technologies'));
+    const attrBox = attribution ? attribution.getBoundingClientRect() : null;
+    const row = [...document.querySelectorAll('aside div')].find(el => el.className.includes('grid') && el.textContent.includes('Orders and billing'));
+    const cols = row ? getComputedStyle(row).gridTemplateColumns.split(' ').filter(Boolean).length : 0;
+    const strip = [...document.querySelectorAll('aside div')].find(el => /overflow-x-auto/.test(el.className) && el.querySelectorAll('a').length);
+    return {
+      vw: window.innerWidth, vh: window.innerHeight,
+      docH: doc.scrollHeight,
+      overflowX: doc.scrollWidth - window.innerWidth,
+      card: cardBox ? { top: Math.round(cardBox.top), bottom: Math.round(cardBox.bottom) } : null,
+      attrBottom: attrBox ? Math.round(attrBox.bottom) : null,
+      cols,
+      stripVisible: !!strip,
+      klarTopFirst: (document.body.textContent.indexOf('KlarGo POS') < document.body.textContent.indexOf('A product by Infinixo Technologies')),
+    };
+  })()`);
+  check(fit.docH <= fit.vh + 2, `no vertical page scroll (${fit.docH} ≤ ${fit.vh})`);
+  check(fit.card && fit.card.bottom <= fit.vh + 1 && fit.card.top >= -1,
+    `the login card is fully visible (${fit.card?.top}…${fit.card?.bottom} of ${fit.vh})`);
+  check(fit.attrBottom !== null && fit.attrBottom <= fit.vh,
+    `the company attribution stays visible without scrolling (${fit.attrBottom} ≤ ${fit.vh})`);
+  check(fit.cols === 2, `feature cards are two columns (${fit.cols})`);
+  check(fit.overflowX <= 2, `no horizontal overflow (${fit.overflowX}px)`);
+  check(fit.klarTopFirst, 'KlarGo POS branding is at the top of the panel');
+}
+
+// ═══════════════════════════════════════════════
 //  2. Tablet + mobile — responsive behaviour
 // ═══════════════════════════════════════════════
 for (const vp of [
   { name: 'Tablet 768×1024', w: 768, h: 1024, mobile: true },
+  { name: 'Mobile 390×844', w: 390, h: 844, mobile: true },
   { name: 'Mobile 375×812', w: 375, h: 812, mobile: true },
   { name: 'Small phone 320×640', w: 320, h: 640, mobile: true },
 ]) {

@@ -31,7 +31,11 @@ const apiClient = axios.create({
 // Attach auth token and deduplicate concurrent GET requests.
 apiClient.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('pos_token');
+    // Session storage depends on Remember Me (authStore): checked →
+    // localStorage, unchecked → sessionStorage. Also see setAuthSessionToken.
+    const token = localStorage.getItem('pos_token')
+      || (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('pos_token'))
+      || null;
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -116,10 +120,16 @@ apiClient.interceptors.response.use(
       error.response?.status === 401 &&
       !String(error.config?.url || '').includes('/auth/login')
     ) {
-      const hadToken = !!localStorage.getItem('pos_token');
+      const hadToken = !!(localStorage.getItem('pos_token') ||
+        (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('pos_token')));
       if (hadToken) {
+        // Clear BOTH storages — the session may live in either (Remember Me).
         localStorage.removeItem('pos_token');
         localStorage.removeItem('pos_user');
+        if (typeof sessionStorage !== 'undefined') {
+          sessionStorage.removeItem('pos_token');
+          sessionStorage.removeItem('pos_user');
+        }
         // Tell the app shell to log out + show the login screen.
         window.dispatchEvent(new CustomEvent('pos:session-expired'));
       }

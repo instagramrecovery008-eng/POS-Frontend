@@ -5,6 +5,7 @@ import {
   Building2,
   CreditCard,
   Package,
+  Blocks,
   FileText,
   BarChart3,
   Bell,
@@ -27,6 +28,7 @@ const NAV_ITEMS = [
   { id: 'sa_subscriptions', label: 'Subscriptions', icon: CreditCard },
 
   { id: 'sa_plans', label: 'Plans', icon: Package },
+  { id: 'sa_products', label: 'Products', icon: Blocks },
   { id: 'sa_invoices', label: 'Invoices', icon: FileText },
   { id: 'sa_reports', label: 'Platform Reports', icon: BarChart3 },
   { id: 'sa_notifications', label: 'Notifications', icon: Bell },

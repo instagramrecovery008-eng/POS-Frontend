@@ -38,16 +38,82 @@ const STORAGE_KEY_FAILED_ATTEMPTS = 'pos_failed_unlock_attempts';
 const STORAGE_KEY_LOCKOUT_UNTIL = 'pos_lockout_until';
 const STORAGE_KEY_PREVIOUS_SCREEN = 'pos_previous_screen';
 
+// ─── Remember Me ──────────────────────────────────────────────────────────
+// Checked  → token + user live in localStorage  (survive browser restarts;
+//            session lifetime is still governed by the backend JWT expiry —
+//            Remember Me never extends token validity).
+// Unchecked → token + user live in sessionStorage (survive reloads, cleared
+//            when the tab closes).
+// Passwords are never persisted in any storage (asserted by tests).
+const REMEMBER_KEY = 'pos_remember_me';
+
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 
-/** Load serialized user from localStorage (returns null on parse failure) */
-function loadStoredUser() {
+/** Read the Remember Me preference (defaults to checked-persisted behavior). */
+function loadRememberMe() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY_USER);
+    return localStorage.getItem(REMEMBER_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+/** Save/clear the Remember Me preference. Null clears the stored value. */
+function storeRememberMe(value) {
+  try {
+    if (value === null || value === undefined) localStorage.removeItem(REMEMBER_KEY);
+    else localStorage.setItem(REMEMBER_KEY, String(!!value));
+  } catch { /* storage unavailable — default behavior applies */ }
+}
+
+/**
+ * Primary storage for the session token + user based on Remember Me:
+ *  - remember  → localStorage  (persistent across browser restarts)
+ *  - !remember → sessionStorage (tab lifetime only)
+ * The secondary storage is ALWAYS cleared first so a token can never exist
+ * in both places at once (no stale-session resurrection after logout).
+ */
+function sessionStorages(remember) {
+  return remember
+    ? [window.localStorage, window.sessionStorage]
+    : [window.sessionStorage, window.localStorage];
+}
+
+function persistSession(token, user, remember) {
+  const [primary, secondary] = sessionStorages(remember);
+  try { secondary.removeItem(STORAGE_KEY_TOKEN); secondary.removeItem(STORAGE_KEY_USER); } catch { /* ignore */ }
+  primary.setItem(STORAGE_KEY_TOKEN, token);
+  if (user) primary.setItem(STORAGE_KEY_USER, JSON.stringify(user));
+}
+
+function clearPersistedSession() {
+  for (const storage of [window.localStorage, window.sessionStorage]) {
+    try {
+      storage.removeItem(STORAGE_KEY_TOKEN);
+      storage.removeItem(STORAGE_KEY_USER);
+    } catch { /* ignore */ }
+  }
+}
+
+/** Read the session token from whichever storage holds it (remember-aware). */
+function loadStoredToken() {
+  const remember = loadRememberMe();
+  const [primary, secondary] = sessionStorages(remember);
+  try {
+    return primary.getItem(STORAGE_KEY_TOKEN) ?? secondary.getItem(STORAGE_KEY_TOKEN) ?? null;
+  } catch {
+    return null;
+  }
+}
+function loadStoredUser() {
+  const remember = loadRememberMe();
+  const [primary, secondary] = sessionStorages(remember);
+  try {
+    const raw = primary.getItem(STORAGE_KEY_USER) ?? secondary.getItem(STORAGE_KEY_USER);
     return raw ? JSON.parse(raw) : null;
   } catch {
-    localStorage.removeItem(STORAGE_KEY_USER);
+    clearPersistedSession();
     return null;
   }
 }
@@ -94,13 +160,15 @@ const useAuthStore = create((set, get) => ({
   user: loadStoredUser(),
   mustChangePassword: false, // set from login/profile responses (backend-authoritative)
   subscription: null, // live subscription snapshot (plan, limits, features) — never cached, refreshed at login/profile
+  // Remember Me preference (persisted so reloads keep the chosen behavior)
+  rememberMe: loadRememberMe(),
   // Self-serve onboarding payload returned by /auth/login|register|profile for
   // ADMIN applicants whose restaurant is not ACTIVE yet. Backend status is the
   // source of truth for every step decision in the onboarding wizard.
   onboarding: null,
-  token: localStorage.getItem(STORAGE_KEY_TOKEN) || null,
-  isAuthenticated: !!localStorage.getItem(STORAGE_KEY_TOKEN),
-  isUnlocked: !!localStorage.getItem(STORAGE_KEY_TOKEN),
+  token: loadStoredToken(),
+  isAuthenticated: !!loadStoredToken(),
+  isUnlocked: !!loadStoredToken(),
   loading: false,
   error: null,
   sessionReady: false, // true after restoreSession completes
@@ -266,16 +334,19 @@ const useAuthStore = create((set, get) => ({
   /** Store the onboarding payload handed back by the backend (or clear it). */
   setOnboarding: (onboarding) => set({ onboarding: onboarding || null }),
 
-  login: async (email, password) => {
+  login: async (email, password, rememberMe) => {
     set({ loading: true, error: null });
     try {
       const resp = await authApi.login(email, password);
       if (resp.success && resp.token) {
-        localStorage.setItem(STORAGE_KEY_TOKEN, resp.token);
-        if (resp.user) {
-          localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(resp.user));
-        }
+        // Remember Me chooses WHERE the session lives, not how long the JWT
+        // is valid: checked → localStorage (survives restarts), unchecked →
+        // sessionStorage (tab lifetime). No password is ever stored.
+        const remember = rememberMe !== undefined ? !!rememberMe : loadRememberMe();
+        storeRememberMe(remember);
+        persistSession(resp.token, resp.user, remember);
         set({
+          rememberMe: remember,
           token: resp.token,
           user: resp.user,
           // First-login forced password change flag comes from the login body
@@ -325,10 +396,8 @@ const useAuthStore = create((set, get) => ({
     try {
       const resp = await authApi.register(data);
       if (resp.success && resp.token) {
-        localStorage.setItem(STORAGE_KEY_TOKEN, resp.token);
-        if (resp.user) {
-          localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(resp.user));
-        }
+        const remember = loadRememberMe();
+        persistSession(resp.token, resp.user, remember);
         set({
           token: resp.token,
           user: resp.user,
@@ -353,8 +422,7 @@ const useAuthStore = create((set, get) => ({
   },
 
   logout: () => {
-    localStorage.removeItem(STORAGE_KEY_TOKEN);
-    localStorage.removeItem(STORAGE_KEY_USER);
+    clearPersistedSession();
     localStorage.removeItem(STORAGE_KEY_FAILED_ATTEMPTS);
     localStorage.removeItem(STORAGE_KEY_LOCKOUT_UNTIL);
     localStorage.removeItem(STORAGE_KEY_PREVIOUS_SCREEN);
@@ -385,7 +453,7 @@ const useAuthStore = create((set, get) => ({
    * same promise as the first, ensuring only ONE /api/auth/profile request.
    */
   restoreSession: async () => {
-    const token = localStorage.getItem(STORAGE_KEY_TOKEN);
+    const token = loadStoredToken();
     if (!token) {
       set({ sessionReady: true });
       return;
@@ -401,7 +469,7 @@ const useAuthStore = create((set, get) => ({
       try {
         const resp = await authApi.profile();
         if (resp.success && resp.user) {
-          localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(resp.user));
+          persistSession(token, resp.user, loadRememberMe());
           set({
             user: resp.user,
             // Keep the flag fresh on rehydration — the user object carries
@@ -420,8 +488,7 @@ const useAuthStore = create((set, get) => ({
           get().loadStaffPermissions().catch(() => {});
         } else {
           // Token invalid — force logout
-          localStorage.removeItem(STORAGE_KEY_TOKEN);
-          localStorage.removeItem(STORAGE_KEY_USER);
+          clearPersistedSession();
           set({
             user: null,
             token: null,
@@ -452,7 +519,7 @@ const useAuthStore = create((set, get) => ({
     try {
       const resp = await authApi.profile();
       if (resp.success && resp.user) {
-        localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(resp.user));
+        persistSession(loadStoredToken(), resp.user, loadRememberMe());
         set({
           user: resp.user,
           subscription: resp.subscription || null,
@@ -564,8 +631,8 @@ const useAuthStore = create((set, get) => ({
   updateProfile: (profile) => {
     const current = get().user || {};
     const updated = { ...current, ...profile };
-        localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(updated));
-        set({ user: updated });
+    persistSession(loadStoredToken(), updated, loadRememberMe());
+    set({ user: updated });
   },
 
   clearError: () => set({ error: null }),

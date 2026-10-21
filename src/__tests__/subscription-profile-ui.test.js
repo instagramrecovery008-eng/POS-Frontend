@@ -152,7 +152,12 @@ check(dropdown.includes("isSuperAdmin || canAccessScreen(user?.role, 'settings')
 // screens stay unreachable once logged out.
 const auth = read('store/authStore.js');
 const appShell = read('components/layout/app-shell/AppShell.jsx');
-check(auth.includes('localStorage.removeItem(STORAGE_KEY_TOKEN)') && auth.includes('localStorage.removeItem(STORAGE_KEY_USER)'), 'logout clears the persisted token + user');
+// Remember Me moved storage selection into clearPersistedSession() (token +
+// user are removed from BOTH local and session storage) — assert that is wired.
+check(auth.includes('function clearPersistedSession') 
+  ? auth.includes('clearPersistedSession();') && /removeItem\(STORAGE_KEY_TOKEN\)[\s\S]{0,80}removeItem\(STORAGE_KEY_USER\)/.test(auth)
+  : (auth.includes('localStorage.removeItem(STORAGE_KEY_TOKEN)') && auth.includes('localStorage.removeItem(STORAGE_KEY_USER)')),
+  'logout clears the persisted token + user');
 check(/isAuthenticated: false[\s\S]{0,140}isUnlocked: false/.test(auth), 'logout flips the authenticated + unlocked state off');
 check(appShell.includes('if (!isUnlocked)') && appShell.includes('return <LoginPage />'), 'logged-out users can only reach the login screen (no protected page)');
 

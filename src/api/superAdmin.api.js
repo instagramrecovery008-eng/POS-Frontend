@@ -217,6 +217,22 @@ export const superAdminApi = {
     apiClient.post('/super-admin/email/queue/retry'),
   listPayments: (params = {}) =>
     apiClient.get('/super-admin/payments', { params }),
+
+  // ─── Company Products (Infinixo Technologies product registry) ───
+  getProducts: (params = {}) =>
+    apiClient.get('/super-admin/products', { params }),
+
+  createProduct: (data) =>
+    apiClient.post('/super-admin/products', data),
+
+  updateProduct: (id, data) =>
+    apiClient.put(`/super-admin/products/${id}`, data),
+
+  toggleProductStatus: (id) =>
+    apiClient.patch(`/super-admin/products/${id}/toggle`),
+
+  deleteProduct: (id) =>
+    apiClient.delete(`/super-admin/products/${id}`),
 };
 
 export default superAdminApi;

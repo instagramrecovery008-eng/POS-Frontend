@@ -50,6 +50,7 @@ const SystemSettings = lazy(() => import('../../../features/super-admin/pages/Sy
 const PaymentGateway = lazy(() => import('../../../features/super-admin/pages/PaymentGateway'));
 const AuditLogs = lazy(() => import('../../../features/super-admin/pages/AuditLogs'));
 const PlansManagement = lazy(() => import('../../../features/super-admin/pages/PlansManagement'));
+const ProductsManagement = lazy(() => import('../../../features/super-admin/pages/ProductsManagement'));
 const Invoices = lazy(() => import('../../../features/super-admin/pages/Invoices'));
 const ProfilePage = lazy(() => import('../../../features/super-admin/pages/ProfilePage'));
 
@@ -119,6 +120,7 @@ const ScreenRenderer = {
   sa_subscriptions: SubscriptionManagement,
   sa_users: UserManagement,
   sa_plans: PlansManagement,
+  sa_products: ProductsManagement,
   sa_invoices: Invoices,
   sa_reports: PlatformReports,
   sa_notifications: Notifications,
@@ -160,7 +162,7 @@ const SCREEN_BUSINESS_CAPABILITY = {
 const BASIC_POS_SCREENS = ['orders'];
 
 // ── Super Admin screens never need module visibility checks ──
-const SUPER_ADMIN_SCREENS = [  'sa_dashboard', 'sa_restaurants', 'sa_subscriptions',
+const SUPER_ADMIN_SCREENS = [  'sa_dashboard', 'sa_restaurants', 'sa_subscriptions', 'sa_products',
   'sa_plans', 'sa_invoices', 'sa_reports', 'sa_notifications', 'sa_settings', 'sa_gateway', 'sa_audit', 'sa_profile',
   'sa_applications',
 ];

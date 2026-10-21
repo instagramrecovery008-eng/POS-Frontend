@@ -79,8 +79,11 @@ check(/Enter your temporary password/.test(forcePage), 'the screen asks for the 
 
 // ═══ 4. No password is ever persisted ═══
 section('4. CREDENTIAL HYGIENE');
-check(/localStorage\.setItem\(STORAGE_KEY_TOKEN/.test(authStore), 'the session token is persisted');
-check(/localStorage\.setItem\(STORAGE_KEY_USER, JSON\.stringify\(resp\.user\)\)/.test(authStore), 'the user record is persisted');
+// Remember Me selects WHERE the session lives (localStorage when checked,
+// sessionStorage when unchecked) through persistSession() — token + user are
+// still persisted by the login action either way.
+check(/function persistSession\(/.test(authStore) && /primary\.setItem\(STORAGE_KEY_TOKEN, token\)/.test(authStore), 'the session token is persisted (remember-aware storage)');
+check(/primary\.setItem\(STORAGE_KEY_USER, JSON\.stringify\(user\)\)/.test(authStore), 'the user record is persisted (remember-aware storage)');
 check(!/localStorage\.setItem\([^)]*password/i.test(authStore), 'no password is written to localStorage');
 check(!/sessionStorage\.setItem\([^)]*password/i.test(authStore), 'no password is written to sessionStorage');
 check(/autoComplete="current-password"/.test(loginForm) && /type=\{showPassword \? 'text' : 'password'\}/.test(loginForm), 'the password field is masked by default with the right autocomplete hint');

@@ -22,6 +22,23 @@ export const settingApi = {
       return null;
     }
   },
+
+  /**
+   * Public product registry (no auth) for the login page's "Our Products"
+   * section. Returns ONLY active products; the backend swallows its own
+   * errors, and any client-side failure degrades to an empty list so the
+   * login flow is never blocked by this decorative section.
+   */
+  getPublicProducts: async () => {
+    try {
+      const resp = await fetch(`${API_BASE_URL}/products/public`);
+      if (!resp.ok) return [];
+      const json = await resp.json();
+      return Array.isArray(json?.data) ? json.data : [];
+    } catch {
+      return [];
+    }
+  },
 };
 
 export default settingApi;

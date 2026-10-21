@@ -16,7 +16,7 @@ import { isValidEmail } from '../../../utils/email';
  * to `<id>@restaurant.com`), therefore the email FORMAT is only enforced when
  * the value actually contains an '@'.
  */
-export default function LoginForm({ onSubmit, loading, error }) {
+export default function LoginForm({ onSubmit, loading, error, rememberMe, onRememberChange }) {
   const [userId, setUserId] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -40,7 +40,7 @@ export default function LoginForm({ onSubmit, loading, error }) {
     e.preventDefault();
     if (loading) return;
     if (!validate()) return;
-    onSubmit(userId.trim(), password);
+    onSubmit(userId.trim(), password, rememberMe);
   };
 
   /** Re-validate a single field once it has been touched by a submit attempt. */
@@ -79,7 +79,7 @@ export default function LoginForm({ onSubmit, loading, error }) {
           setUserId(e.target.value);
           revalidateField('userId', e.target.value);
         }}
-        placeholder="you@restaurant.com"
+        placeholder="you@yourbusiness.com"
         type="text"
         inputMode="email"
         autoComplete="username"
@@ -138,6 +138,23 @@ export default function LoginForm({ onSubmit, loading, error }) {
           <p className="text-[10px] font-semibold text-amber-600">Caps Lock is on.</p>
         ) : null}
       </div>
+
+      {/* Remember Me — where the session lives (localStorage vs sessionStorage);
+          never extends JWT validity and never stores the password. */}
+      <label
+        htmlFor="remember-me"
+        className="flex cursor-pointer select-none items-center gap-2.5"
+      >
+        <input
+          id="remember-me"
+          type="checkbox"
+          checked={!!rememberMe}
+          onChange={(e) => onRememberChange && onRememberChange(e.target.checked)}
+          disabled={loading}
+          className="h-4 w-4 shrink-0 cursor-pointer rounded border-slate-300 text-[#16A34A] accent-[#16A34A] focus:outline-none focus:ring-2 focus:ring-[#16A34A]/30"
+        />
+        <span className="text-xs font-semibold text-slate-600">Remember Me</span>
+      </label>
 
       <button
         type="submit"

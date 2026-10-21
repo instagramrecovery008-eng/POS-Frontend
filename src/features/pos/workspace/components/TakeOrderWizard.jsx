@@ -177,6 +177,7 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
   const [menuItems, setMenuItems] = useState([]);
   const [categories, setCategories] = useState([]);
   const [subcategories, setSubcategories] = useState([]); // loaded once with the menu (Part 2 req. 2)
+  const [menuError, setMenuError] = useState(null); // menu request failed → error state + Retry (req 15)
   const [selectedCat, setSelectedCat] = useState('All');
   const [selectedSubcat, setSelectedSubcat] = useState(SUBCATEGORY_ALL); // 'All' | 'NONE' | subcategory id
   const [searchQuery, setSearchQuery] = useState('');
@@ -453,8 +454,10 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
         prepTime: m.preparationTime || 15,
       }));
       setMenuItems(items.filter(m => m.isLive));
+      setMenuError(null);
     } catch (e) {
       console.error('Failed to load menu:', e);
+      setMenuError(e?.message || 'The menu could not be loaded. Check the connection and try again.');
     }
   };
 
@@ -1035,15 +1038,35 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
     : subcategoryTabsFor(menuItems, subcategories, selectedCat);
 
   // Shared hierarchy filter (Part 2/9): category → subcategory → search.
+  // SEARCH spans the COMPLETE menu: while a query is typed the category and
+  // subcategory filters are suspended, so a dish is never hidden by the
+  // current selection. Clearing the query restores the normal hierarchy.
   // NOTE: the inline barcode input was removed from the wizard — with the
   // scanner ON the Basic POS workspace owns the dedicated Counter Scan
   // screen (spec §8/§13: never show both interfaces at once).
-  const filteredItems = filterMenuItems(menuItems, {
-    selectedCategory: selectedCat,
-    selectedSubcategory: selectedSubcat,
-    searchQuery,
-    dietaryFilter: 'All', // dietary restrictions already filtered server-side (dietaryMenuWhere)
-  });
+  const isSearching = searchQuery.trim().length > 0;
+  const filteredItems = isSearching
+    ? filterMenuItems(menuItems, { searchQuery, dietaryFilter: 'All' })
+    : filterMenuItems(menuItems, {
+        selectedCategory: selectedCat,
+        selectedSubcategory: selectedSubcat,
+        dietaryFilter: 'All', // dietary restrictions already filtered server-side (dietaryMenuWhere)
+      });
+
+  // ── Category navigation model (sidebar + compact selector) ──
+  // Item counts come from the already-loaded menu (no extra request). Active
+  // API categories keep their sort order; any category that only exists on
+  // items (e.g. the categories request failed) is appended so no item can
+  // become unreachable.
+  const countForCategory = (name) => menuItems.filter((i) => i.category === name).length;
+  const apiCategoryNames = new Set(categories.map((c) => c.name));
+  const sidebarCategories = [
+    ...categories.filter((c) => visibleCategories.has(c.name)),
+    ...Array.from(visibleCategories)
+      .filter((name) => !apiCategoryNames.has(name))
+      .sort()
+      .map((name) => ({ id: `cat-item-${name}`, name })),
+  ];
 
   const filteredTables = tables.filter(t => {
     if (selectedFloor) return t.floorId === selectedFloor.id;
@@ -1075,27 +1098,58 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
 
   const displayStep = stepMap[currentStep] || 0;
 
+  // The Menu step is the only step that owns the menu search — the header puts
+  // it beside the title on wide screens and wraps it onto its own compact row
+  // on narrow ones (see the header below).
+  const isMenuStep = !!orderType && (isTakeaway ? currentStep === 1 : currentStep === 3);
+
+  // ONE search implementation: the same `searchQuery` state and the same
+  // `filteredItems` derivation as the menu grid below — only its position
+  // changes with the viewport.
+  const menuSearchField = (
+    <div className="relative w-full min-w-0">
+      <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+      <input
+        type="text"
+        aria-label="Search the whole menu"
+        placeholder="Search the whole menu — dishes, categories..."
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+        className="w-full h-9 pl-8 pr-10 bg-white border border-slate-200 rounded-xl text-xs outline-none focus:border-[#16A34A] focus:ring-1 focus:ring-[#16A34A]/20"
+      />
+      {isSearching && (
+        <span
+          title={`${filteredItems.length} match${filteredItems.length === 1 ? '' : 'es'} across all categories`}
+          className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold text-slate-500"
+        >
+          {filteredItems.length}
+        </span>
+      )}
+    </div>
+  );
+
+  // Slim step indicator (Menu / Review etc. unchanged — only the height).
   const renderStepIndicator = () => (
-    <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-slate-100 bg-white overflow-x-auto no-scrollbar">
+    <div className="flex items-center gap-1.5 px-3 sm:px-4 py-1.5 border-b border-slate-100 bg-white overflow-x-auto no-scrollbar shrink-0">
       {activeSteps.map((label, idx) => {
         const isCompleted = idx < displayStep;
         const isCurrent = idx === displayStep;
         return (
           <React.Fragment key={idx}>
-            <div className={`flex items-center gap-1.5 transition-all ${isCurrent ? 'scale-100' : ''}`}>
-              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-extrabold shrink-0 transition-all ${
+            <div className="flex items-center gap-1.5">
+              <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-extrabold shrink-0 transition-all ${
                 isCompleted ? 'bg-[#16A34A] text-white' :
                 isCurrent ? 'bg-[#16A34A] text-white shadow-sm ring-2 ring-[#16A34A]/20' :
                 'bg-slate-200 text-slate-500'
               }`}>
                 {isCompleted ? <Check className="w-3 h-3" /> : idx + 1}
               </div>
-              <span className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${
+              <span className={`text-[9px] font-bold uppercase tracking-wider whitespace-nowrap ${
                 isCurrent ? 'text-[#16A34A]' : isCompleted ? 'text-slate-600' : 'text-slate-400'
               }`}>{label}</span>
             </div>
             {idx < activeSteps.length - 1 && (
-              <div className={`w-4 sm:w-5 h-px shrink-0 ${isCompleted ? 'bg-[#16A34A]/40' : 'bg-slate-200'}`} />
+              <div className={`w-3 sm:w-4 h-px shrink-0 ${isCompleted ? 'bg-[#16A34A]/40' : 'bg-slate-200'}`} />
             )}
           </React.Fragment>
         );
@@ -1301,50 +1355,88 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
       {/* Inline barcode input removed (spec §13): the wizard never shows a
           scanner interface. With the scanner ON, the Basic POS workspace's
           dedicated Counter Scan screen is the single scanning UI. */}
-      {/* Search bar */}
-      <div className="px-3 pt-3 pb-2 shrink-0">
-        <div className="relative">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input type="text" placeholder="Search dishes, categories..."
-            value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-3 h-9 bg-white border border-slate-200 rounded-xl text-xs outline-none focus:border-[#16A34A] focus:ring-1 focus:ring-[#16A34A]/20" />
-        </div>
-      </div>
+      {/* Search lives in the header row (beside “New Order” on desktop, its own
+          compact row on narrow screens) so the grid gets the vertical space.
+          Search still spans the COMPLETE menu regardless of the selected
+          category — see filteredItems above. */}
 
-      {/* Horizontal category selector — matching POS Ordering style */}
-      <div className="shrink-0 border-b border-slate-100 bg-white">
+      {/* Compact category selector — small screens only (sidebar takes over
+          from md up). Horizontal chips keep the menu usable without stealing
+          width from the item grid. */}
+      <div className="md:hidden shrink-0 border-b border-slate-100 bg-white">
         <div className="flex gap-1.5 overflow-x-auto px-3 py-2 no-scrollbar">
           <button onClick={() => handleWizardCategorySelect('All')}
-            className={`shrink-0 h-10 px-4 text-[11px] font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+            className={`shrink-0 h-9 px-3.5 text-[11px] font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
               selectedCat === 'All'
                 ? 'bg-[#16A34A] text-white shadow-xs'
                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
             }`}>
             <LayoutGrid className="w-3.5 h-3.5" />
-            All
-            <span className={`text-[9px] px-1.5 py-0.5 rounded-full ml-0.5 ${selectedCat === 'All' ? 'bg-white/20' : 'bg-slate-200 text-slate-500'}`}>
+            All Items
+            <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${selectedCat === 'All' ? 'bg-white/20' : 'bg-slate-200 text-slate-500'}`}>
               {menuItems.length}
             </span>
           </button>
-          {categories.filter(cat => visibleCategories.has(cat.name)).map(cat => {
-            const catCount = menuItems.filter(i => i.category === cat.name).length;
-            return (
-              <button key={cat.id} onClick={() => handleWizardCategorySelect(cat.name)}
-                className={`shrink-0 h-10 px-4 text-[11px] font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap ${
-                  selectedCat === cat.name
-                    ? 'text-white shadow-xs'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-                style={selectedCat === cat.name ? { backgroundColor: cat.color || '#16A34A' } : undefined}>
-                {cat.name}
-                <span className={`text-[9px] px-1.5 py-0.5 rounded-full ml-1.5 ${selectedCat === cat.name ? 'bg-white/20' : 'bg-slate-200 text-slate-500'}`}>
-                  {catCount}
-                </span>
-              </button>
-            );
-          })}
+          {sidebarCategories.map(cat => (
+            <button key={cat.id} onClick={() => handleWizardCategorySelect(cat.name)}
+              className={`shrink-0 h-9 px-3.5 text-[11px] font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
+                selectedCat === cat.name
+                  ? 'bg-[#16A34A] text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}>
+              {cat.name}
+              <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${selectedCat === cat.name ? 'bg-white/20' : 'bg-slate-200 text-slate-500'}`}>
+                {countForCategory(cat.name)}
+              </span>
+            </button>
+          ))}
         </div>
       </div>
+
+      <div className="flex-1 flex overflow-hidden min-h-0">
+      {/* Category sidebar (md+) — fixed width, vertically scrollable. Only
+          THIS list scrolls; the step/page never scrolls with it. */}
+      <aside className="hidden md:flex flex-col w-44 lg:w-52 shrink-0 border-r border-slate-100 bg-white">
+        <div className="px-3 pt-3 pb-2 shrink-0 flex items-center justify-between">
+          <p className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400">Categories</p>
+          <span className="text-[9px] font-bold text-slate-400">{menuItems.length} items</span>
+        </div>
+        <div className="flex-1 overflow-y-auto overscroll-contain px-2 pb-3 space-y-1">
+          <button onClick={() => handleWizardCategorySelect('All')}
+            className={`w-full h-10 px-3 text-[11px] font-bold rounded-xl transition-all cursor-pointer flex items-center gap-2 ${
+              selectedCat === 'All'
+                ? 'bg-[#16A34A] text-white shadow-xs'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}>
+            <LayoutGrid className="w-3.5 h-3.5 shrink-0" />
+            <span className="flex-1 text-left truncate">All Items</span>
+            <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${selectedCat === 'All' ? 'bg-white/20' : 'bg-slate-100 text-slate-500'}`}>
+              {menuItems.length}
+            </span>
+          </button>
+          {sidebarCategories.map(cat => (
+            <button key={cat.id} onClick={() => handleWizardCategorySelect(cat.name)}
+              className={`w-full h-10 px-3 text-[11px] font-bold rounded-xl transition-all cursor-pointer flex items-center gap-2 ${
+                selectedCat === cat.name
+                  ? 'bg-[#16A34A] text-white shadow-xs'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}>
+              <span className="flex-1 text-left truncate">{cat.name}</span>
+              <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${selectedCat === cat.name ? 'bg-white/20' : 'bg-slate-100 text-slate-500'}`}>
+                {countForCategory(cat.name)}
+              </span>
+            </button>
+          ))}
+          {sidebarCategories.length === 0 && !menuError && (
+            <p className="px-2 py-3 text-[10px] text-slate-400 leading-relaxed">
+              No categories yet — items show under All Items.
+            </p>
+          )}
+        </div>
+      </aside>
+
+      {/* Right column: subcategory row + item grid */}
+      <div className="flex-1 flex flex-col overflow-hidden min-h-0">
 
       {/* LEVEL 2 — Subcategory tab row for the selected category (Part 2 req. 1-4):
           Category → Subcategory → Items. Category change resets this to All. */}
@@ -1375,6 +1467,22 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
 
       {/* Items grid — large POS-style cards */}
       <div className="flex-1 overflow-y-auto overscroll-contain p-3">
+        {menuError ? (
+          /* Error state — the menu request failed. Offer a retry instead of
+             silently showing an empty grid (the wizard never fabricates data). */
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="w-14 h-14 rounded-2xl bg-red-50 flex items-center justify-center mb-3">
+              <AlertCircle className="w-7 h-7 text-red-400" />
+            </div>
+            <p className="text-sm font-bold text-slate-600 mb-1">Could not load the menu</p>
+            <p className="text-[11px] text-slate-400 mb-4">{menuError}</p>
+            <button onClick={loadMenu}
+              className="h-8 px-4 bg-[#16A34A] hover:bg-[#15803D] text-white font-bold rounded-lg text-[10px] uppercase tracking-wider cursor-pointer">
+              Retry
+            </button>
+          </div>
+        ) : (
+        <>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
           {filteredItems.map(item => {
             const inCart = cart.find(c => c.itemId === item.id);
@@ -1466,13 +1574,17 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
             <p className="text-sm font-bold text-slate-500 mb-1">No menu items found</p>
             <p className="text-[11px] text-slate-400">
               {searchQuery
-                ? `No results for "${searchQuery}". Try a different search.`
+                ? `No results for "${searchQuery}" across the whole menu. Try a different search.`
                 : selectedCat !== 'All'
                   ? `No items available in ${selectedCat}. Try another category.`
                   : 'No menu items available. Add items in Menu Management.'}
             </p>
           </div>
         )}
+        </>
+        )}
+      </div>
+      </div>
       </div>
     </div>
   );
@@ -1674,9 +1786,11 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
   const wizardContent = (
     <>
         
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50 shrink-0">
-          <div className="flex items-center gap-2">
+        {/* Header — one compact row on desktop: back + title, the menu search,
+            then the table/order badges. On narrow widths the search wraps onto
+            its own row (order-last) instead of overflowing. */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-2 px-3 sm:px-4 py-2 border-b border-slate-200 bg-slate-50 shrink-0">
+          <div className="flex min-w-0 shrink-0 items-center gap-2">
             {(!isPageMode || isTableSession) && (
               <>
                 {/* Overlay: close. Page mode (POS Ordering screen): leave a
@@ -1691,9 +1805,17 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
                 <div className="h-4 w-px bg-slate-200" />
               </>
             )}
-            <h2 className="text-xs font-extrabold text-slate-800 uppercase tracking-wider">{isEditing ? `Edit Order #${editingOrder.orderNo || editingOrder.id}` : 'New Order'}</h2>
+            <h2 className="text-xs font-extrabold text-slate-800 uppercase tracking-wider whitespace-nowrap">{isEditing ? `Edit Order #${editingOrder.orderNo || editingOrder.id}` : 'New Order'}</h2>
           </div>
-          <div className="flex items-center gap-2 flex-wrap justify-end">
+
+          {/* Search — beside the title from md up, second row below it on mobile */}
+          {isMenuStep && (
+            <div className="order-last w-full md:order-none md:w-auto md:flex-1 md:px-1">
+              {menuSearchField}
+            </div>
+          )}
+
+          <div className="flex items-center gap-1.5 flex-wrap justify-end ml-auto">
             {/* The table this order belongs to — always visible while ordering
                 so a wrong table can never be mistaken for the right one
                 (Floors & Tables → Open Table carries the exact table here). */}

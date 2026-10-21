@@ -693,7 +693,10 @@ check(appShellNoLock.includes('if (!isUnlocked)') && appShellNoLock.includes('re
 check(appShellNoLock.includes('canAccessScreen(userRole, currentScreen)'), 'route guards remain enforced');
 check(appShellNoLock.includes('mustChangePassword'), 'forced password change gate remains');
 const authNoLock = read('store/authStore.js');
-check(authNoLock.includes('logout:') && authNoLock.includes('localStorage.removeItem(STORAGE_KEY_TOKEN)'), 'logout still clears the session');
+check(
+  authNoLock.includes('logout:') && authNoLock.includes('clearPersistedSession()') && authNoLock.includes('function clearPersistedSession'),
+  'logout still clears the session'
+);
 const staffPageSrc2 = read('features/masters/staff/pages/StaffPage.jsx');
 check(staffPageSrc2.includes('mapRoleFromBackend = (role) => getRoleDisplayName(role)'), 'StaffPage display labels via utility');
 const discountFormSrc2 = read('features/discounts/components/DiscountFormModal.jsx');
