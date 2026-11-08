@@ -435,7 +435,7 @@ function ApplicationDetail({ applicationId, onBack, onChanged }) {
           <Info label="Owner Account" value={app.owner ? `${app.owner.name} (${app.owner.email})` : null} />
           <Info label="Email" value={app.email} />
           <Info label="Phone" value={app.phone} />
-          <Info label="GST / Tax" value={app.gstNumber} />
+          <Info label="Tax Number" value={app.gstNumber} />
           <Info label="Registration No." value={app.registrationNumber} />
           <Info label="Website" value={app.website} />
           <div className="col-span-2 md:col-span-3">

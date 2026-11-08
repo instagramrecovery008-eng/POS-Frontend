@@ -65,7 +65,7 @@ check(/lastFetched/.test(settingsStore), 'the store records when it last fetched
 section('4. General section exposes every supported profile field');
 for (const [label, key] of [
   ['Restaurant Name', 'restaurantName'], ['Owner Name', 'ownerName'], ['Email', 'email'],
-  ['Phone', 'contactNumber'], ['TAX Number', 'gstNumber'], ['FSSAI Number', 'fssaiNumber'],
+  ['Phone', 'contactNumber'], ['TAX Number', 'gstNumber'], ['Business License Number', 'fssaiNumber'],
   ['Website', 'website'], ['Address', 'address'], ['City', 'city'], ['State', 'state'],
   ['Country', 'country'], ['Postal Code', 'postalCode'],
 ]) {

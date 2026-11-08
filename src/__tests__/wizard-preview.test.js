@@ -119,14 +119,14 @@ check(active.includes('if (previewLoading) return;'), 'double-tap guard: a secon
 sub('19. Preview shows ALL items (complete current order across KOTs)');
 check(active.includes('previewOrder.orderItems'), 'renders orderItems (every OrderItem row, incl. incremental additions)');
 check(active.includes('item.menuItem?.name'), 'item name from the included menuItem relation');
-check(active.includes('× ₹{Number(item.price).toFixed(2)}'), 'quantity × unit price displayed');
+check(active.includes('× {currency}{Number(item.price).toFixed(2)}'), 'quantity × unit price displayed');
 // The preview now renders the ACTIVE (non-voided) remainder for a line that
 // was partially voided, and falls back to the ordered quantity otherwise — so
 // a voided kitchen ticket can never show as pending work, while the full
 // ordered quantity is still displayed for untouched lines.
 check(active.includes('fullyVoided ? `${item.quantity}` : `${active}`'),
   'preview shows the active (non-voided) quantity when part of a line was voided');
-check(active.includes('₹{Number(item.total).toFixed(2)}'), 'line total displayed');
+check(active.includes('{currency}{Number(item.total).toFixed(2)}'), 'line total displayed');
 check(active.includes('{item.notes &&'), 'item notes/modifiers rendered when present');
 
 sub('20. Preview totals match the order (real DB values)');

@@ -1,7 +1,6 @@
 import React, { useEffect } from 'react';
 import {
   LayoutDashboard,
-  UtensilsCrossed,
   Layers,
   Clock,
   FileSpreadsheet,
@@ -15,6 +14,7 @@ import {
   LogOut,
   X,
 } from 'lucide-react';
+import { DOCUMENT_ICONS } from '../../../utils/documentIcons';
 import AppLogo from '../../common/AppLogo';
 import BrandLogo from '../../common/BrandLogo';
 import { cn } from '../../../lib/utils';
@@ -24,7 +24,7 @@ import { getBusinessCapabilities, catalogNaming, isBasicPosFoodBusiness, isBasic
 
 // Static sidebar items (order-creation entry is inserted dynamically per business mode)
 const navItemsBase = [
-  { screen: 'orders', label: 'Kitchen Tickets', icon: UtensilsCrossed, setting: 'enableKitchen' },
+  { screen: 'orders', label: 'Kitchen Tickets', icon: DOCUMENT_ICONS.kot, setting: 'enableKitchen' },
   { screen: 'tables', label: 'Floors & Tables', icon: Layers, setting: 'enableFloorManagement' },
   { screen: 'active_orders', label: 'Active Orders', icon: Clock, setting: 'enableActiveOrders' },
   { screen: 'menu', label: 'Menu & Stock', icon: FileSpreadsheet, setting: 'enableMenu' },

@@ -13,7 +13,7 @@ export default function StaffReports({ staffSales, staffActivity, staffDiscountC
   const [subTab, setSubTab] = useState('sales');
   const fcVal = fc || formatCurrency;
   const { settings } = useSettingsStore();
-  const currencySymbol = settings?.currencySymbol || '₹';
+  const currencySymbol = settings?.currencySymbol || '';
 
   if (loading) return null;
 

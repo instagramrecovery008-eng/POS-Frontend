@@ -77,7 +77,7 @@ export default function ReviewStep({ onBack, onDone, onExitToLogin }) {
           {(restaurant.address || restaurant.city) && (
             <Row label="Address" value={[restaurant.address, restaurant.city, restaurant.state, restaurant.country, restaurant.pincode].filter(Boolean).join(', ')} />
           )}
-          {restaurant.gstNumber && <Row label="GST / Tax" value={restaurant.gstNumber} />}
+          {restaurant.gstNumber && <Row label="Tax Number" value={restaurant.gstNumber} />}
           {restaurant.registrationNumber && <Row label="Registration No." value={restaurant.registrationNumber} />}
         </Section>
 

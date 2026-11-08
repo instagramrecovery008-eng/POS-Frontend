@@ -27,7 +27,7 @@ export default function TablesPage() {
   const canBill = canHandleBilling(user?.role);
   const { setScreen, setActiveOrderTakingId, setCheckoutOrderId, setShowTakeOrderWizard, setPendingTable, addToast, refreshTrigger, incrementRefreshTrigger } = useUiStore();
   const { settings } = useSettingsStore();
-  const currency = settings?.currencySymbol || '₹';
+  const currency = settings?.currencySymbol || '';
   // AC / Non-AC table type is a RESTAURANT-mode feature only — the selector is
   // never shown for Basic POS / Quick Billing / retail (backend enforces too).
   const acNonAcPricing = isAcNonAcPricingEnabled(settings);

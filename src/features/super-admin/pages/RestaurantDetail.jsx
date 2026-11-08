@@ -68,8 +68,8 @@ const LIMIT_ITEMS = [
 ];
 
 const DOC_TYPE_LABELS = {
-  GST_CERTIFICATE: 'GST Certificate',
-  FSSAI_LICENSE: 'FSSAI License',
+  GST_CERTIFICATE: 'Tax Registration Certificate',
+  FSSAI_LICENSE: 'Business License',
   BUSINESS_REGISTRATION: 'Business Registration',
   PAN: 'PAN / Business PAN',
   OWNER_ID: 'Owner Identity',
@@ -299,8 +299,8 @@ export default function RestaurantDetail({ restaurantId, onBack, onPlanChanged }
                       <div>
                         <p className="text-[9px] font-bold text-slate-400 uppercase">Business Details</p>
                         <div className="space-y-1 mt-1">
-                          <p className="text-xs text-slate-600"><span className="font-bold text-slate-500">GST:</span> {restaurant.gstNumber || '—'}</p>
-                          <p className="text-xs text-slate-600"><span className="font-bold text-slate-500">FSSAI:</span> {restaurant.fssaiNumber || '—'}</p>
+                          <p className="text-xs text-slate-600"><span className="font-bold text-slate-500">Tax No:</span> {restaurant.gstNumber || '—'}</p>
+                          <p className="text-xs text-slate-600"><span className="font-bold text-slate-500">License No:</span> {restaurant.fssaiNumber || '—'}</p>
                           <p className="text-xs text-slate-600"><span className="font-bold text-slate-500">Timezone:</span> {restaurant.timezone}</p>
                           <p className="text-xs text-slate-600"><span className="font-bold text-slate-500">Currency:</span> {restaurant.currency}</p>
                           <p className="text-xs text-slate-600"><span className="font-bold text-slate-500">Language:</span> {restaurant.language}</p>

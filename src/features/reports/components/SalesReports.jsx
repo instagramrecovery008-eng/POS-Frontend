@@ -32,7 +32,7 @@ export default function SalesReports({
   const [itemChartMetric, setItemChartMetric] = useState('quantity');
 
   const { settings } = useSettingsStore();
-  const currencySymbol = settings?.currencySymbol || '₹';
+  const currencySymbol = settings?.currencySymbol || '';
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 8;
   const itemPageSize = 8;

@@ -11,6 +11,7 @@
  *   LIGHT   #f8fafc  (alternating rows)
  *   BORDER  #e2e8f0  (dividers)
  */
+import { getActiveTimezone } from '../lib/utils.js';
 import * as XLSX from 'xlsx';
 import { useSettingsStore } from '../store';
 
@@ -91,12 +92,12 @@ function formatVal(value, column) {
   if (column?.format === 'currency') {
     const num = Number(value);
     if (isNaN(num)) return String(value);
-    return num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
   if (column?.format === 'number') {
     const num = Number(value);
     if (isNaN(num)) return String(value);
-    return num.toLocaleString('en-IN');
+    return num.toLocaleString('en-US');
   }
   return String(value);
 }
@@ -119,12 +120,12 @@ function getRestaurantInfo() {
       fssaiNumber: s.fssaiNumber || '',
       city: s.city || '',
       state: s.state || '',
-      currency: s.currencySymbol || '₹',
+      currency: s.currencySymbol || '',
     };
   } catch {
     return {
       name: 'Restaurant', logo: '', address: '', phone: '', email: '',
-      gstNumber: '', fssaiNumber: '', city: '', state: '', currency: '₹',
+      gstNumber: '', fssaiNumber: '', city: '', state: '', currency: '',
     };
   }
 }
@@ -136,7 +137,7 @@ function formatDateRange(dateRange) {
 
 function formatGeneratedAt() {
   return new Date().toLocaleString('en-IN', {
-    timeZone: 'Asia/Kolkata',
+    timeZone: getActiveTimezone(),
     day: '2-digit', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });
@@ -185,8 +186,8 @@ function buildFullHeaderHtml(info) {
   const contactParts = [
     info.phone ? `📞 ${esc(info.phone)}` : '',
     info.email ? `✉ ${esc(info.email)}` : '',
-    info.gstNumber ? `GSTIN: ${esc(info.gstNumber)}` : '',
-    info.fssaiNumber ? `FSSAI: ${esc(info.fssaiNumber)}` : '',
+    info.gstNumber ? `Tax No: ${esc(info.gstNumber)}` : '',
+    info.fssaiNumber ? `License No: ${esc(info.fssaiNumber)}` : '',
   ].filter(Boolean).join('  ·  ');
 
   return `
@@ -227,12 +228,12 @@ function buildMetaHtml(dateRange, generatedAt) {
 
 function buildKpiHtml(kpis, currency) {
   if (!kpis || kpis.length === 0) return '';
-  const c = currency || '₹';
+  const c = currency || '';
   const cards = kpis.map(kpi => {
     const rawVal = kpi.value;
     let displayVal;
     if (typeof rawVal === 'number') {
-      displayVal = `${c}${rawVal.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+      displayVal = `${c}${rawVal.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
     } else {
       displayVal = formatVal(rawVal, { format: 'currency' });
       if (typeof rawVal === 'number' && !displayVal.startsWith(c)) {
@@ -240,7 +241,7 @@ function buildKpiHtml(kpis, currency) {
       }
     }
     if (typeof rawVal === 'number') {
-      displayVal = `${c}${rawVal.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+      displayVal = `${c}${rawVal.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
     }
     return `
       <div class="kpi-card">
@@ -689,7 +690,7 @@ function getGlobalStyles() {
  *   - Content has padding to avoid overlap with fixed header/footer
  */
 function generateReportHtml({ title, restaurantInfo, dateRange, generatedAt, kpis, columns, data, summaryRow }) {
-  const currency = restaurantInfo.currency || '₹';
+  const currency = restaurantInfo.currency || '';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -760,7 +761,7 @@ export function exportReportCSV({ title, columns, data, dateRange, filename, sum
   if (info.address || info.city) lines.push(csvEscape([info.address, info.city, info.state].filter(Boolean).join(', ')));
   if (info.phone) lines.push(csvEscape(`Phone: ${info.phone}`));
   if (info.email) lines.push(csvEscape(`Email: ${info.email}`));
-  if (info.gstNumber) lines.push(csvEscape(`GSTIN: ${info.gstNumber}`));
+  if (info.gstNumber) lines.push(csvEscape(`Tax No: ${info.gstNumber}`));
   lines.push(`Report: ${csvEscape(title)}`);
   if (dateRange?.start && dateRange?.end) {
     lines.push(`Period: ${dateRange.start} — ${dateRange.end}`);

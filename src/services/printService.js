@@ -10,6 +10,7 @@
  *   ── Payment ──
  *   ── Footer ──
  */
+import { getActiveTimezone, getActiveCurrency, formatCurrency } from '../lib/utils.js';
 export function generateBillHtml({
   restaurantName = 'Restaurant',
   address = '',
@@ -42,7 +43,7 @@ export function generateBillHtml({
   balanceAmount = 0,
   payments = [],
 
-  currency = '₹',
+  currency = '', // ISO 4217 code the bill was issued in
   paperSize = '80mm' // '58mm' | '80mm' | 'A4'
 }) {
   const isThermal = paperSize !== 'A4';
@@ -55,8 +56,9 @@ export function generateBillHtml({
   const padding = is58mm ? '2px 0' : isThermal ? '3px 0' : '4px 0';
   // Ensure restaurant name is never empty — 'Restaurant' is the absolute last fallback
   const effectiveRestaurantName = restaurantName || 'Restaurant';
-  const fmt = (val) => `${getCurrencySymbol(currency)}${Number(val || 0).toFixed(2)}`;
-  const formattedDate = new Date(date).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  // Centralized Intl formatter, in the bill's own currency (never a hardcoded symbol).
+  const fmt = (val) => formatCurrency(val, currency);
+  const formattedDate = new Date(date).toLocaleString('en-IN', { timeZone: getActiveTimezone(), day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
   // ── Cancelled / Refunded stamp ──
   const isCancelled = status === 'CANCELLED';
@@ -272,8 +274,8 @@ export function generateBillHtml({
     ${address ? `<div class="restaurant-info">${escapeHtml(address)}</div>` : ''}
     ${phone ? `<div class="restaurant-info">${escapeHtml(phone)}</div>` : ''}
     ${email ? `<div class="restaurant-info">${escapeHtml(email)}</div>` : ''}
-    ${gstNumber ? `<div class="restaurant-info">GSTIN: ${escapeHtml(gstNumber)}</div>` : ''}
-    ${fssaiNumber ? `<div class="restaurant-info">FSSAI: ${escapeHtml(fssaiNumber)}</div>` : ''}
+    ${gstNumber ? `<div class="restaurant-info">Tax No: ${escapeHtml(gstNumber)}</div>` : ''}
+    ${fssaiNumber ? `<div class="restaurant-info">License No: ${escapeHtml(fssaiNumber)}</div>` : ''}
   </div>
 
   <hr class="sep-solid">
@@ -331,8 +333,6 @@ export function generateBillHtml({
 </html>`;
 }
 
-/** Return the currency symbol used in bills */
-function getCurrencySymbol(currency) { return currency || '₹'; }
 
 function escapeHtml(str) {
   if (!str) return '';
@@ -383,6 +383,8 @@ function normalizeBillPrintData(raw) {
     fssaiNumber: raw.fssaiNumber != null ? raw.fssaiNumber : (identity.fssaiNumber != null ? identity.fssaiNumber : ''),
     logo: raw.logo != null ? raw.logo : (identity.logo != null ? identity.logo : ''),
     receiptFooter: raw.receiptFooter != null ? raw.receiptFooter : (identity.receiptFooter != null ? identity.receiptFooter : ''),
+    // ISO 4217 code the bill was ISSUED in (reprints keep it)
+    currency: bill.currency || raw.currency || identity.currency || '',
     // Bill identifiers
     billNo: bill.billNo || raw.billNo || '',
     orderNo: order.orderNo || raw.orderNo || '',
@@ -454,6 +456,8 @@ export function openBillPrintPreview(billData, paperSizeOrConfig = '80mm') {
     fssaiNumber: resolve('fssaiNumber', ''),
     logo: resolve('logo', ''),
     receiptFooter: resolve('receiptFooter', 'Thank You! Visit Again.'),
+    // Issued-in currency > explicit config > the company's active currency
+    currency: normalized.currency || restaurantConfig.currency || getActiveCurrency(),
     paperSize,
   });
 
@@ -686,7 +690,7 @@ export function generateReportHtml({
   generatedAt = new Date(),
   sections = []
 }) {
-  const formattedGenTime = new Date(generatedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+  const formattedGenTime = new Date(generatedAt).toLocaleString('en-IN', { timeZone: getActiveTimezone() });
 
   const sectionHtml = sections.map(section => {
     const rowsHtml = (section.rows || []).map((row, i) => {

@@ -13,8 +13,8 @@ const CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'AED'];
 const COUNTRIES = ['India', 'USA', 'UAE', 'UK', 'Singapore', 'Canada', 'Australia'];
 
 const DOCUMENT_TYPES = [
-  { key: 'GST_CERTIFICATE', label: 'GST Certificate', required: true },
-  { key: 'FSSAI_LICENSE', label: 'FSSAI License', required: true },
+  { key: 'GST_CERTIFICATE', label: 'Tax Registration Certificate', required: true },
+  { key: 'FSSAI_LICENSE', label: 'Business License', required: true },
   { key: 'BUSINESS_REGISTRATION', label: 'Business Registration Certificate', required: false },
   { key: 'PAN', label: 'PAN / Business PAN', required: false },
   { key: 'OWNER_ID', label: 'Owner Identity Document', required: false },
@@ -398,11 +398,11 @@ export default function RestaurantOnboarding({ onClose, onSaved }) {
       <h3 className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 pt-2">Legal & Configuration</h3>
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1">
-          <label className="text-[10px] font-bold text-slate-600">GST Number</label>
+          <label className="text-[10px] font-bold text-slate-600">Tax Number</label>
           <input value={restaurant.gstNumber} onChange={e => updateRestaurant('gstNumber', e.target.value)} className="w-full h-9 px-3 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold outline-none focus:border-[#16A34A]" />
         </div>
         <div className="space-y-1">
-          <label className="text-[10px] font-bold text-slate-600">FSSAI Number</label>
+          <label className="text-[10px] font-bold text-slate-600">Business License Number</label>
           <input value={restaurant.fssaiNumber} onChange={e => updateRestaurant('fssaiNumber', e.target.value)} className="w-full h-9 px-3 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold outline-none focus:border-[#16A34A]" />
         </div>
         <div className="space-y-1">
@@ -687,8 +687,8 @@ export default function RestaurantOnboarding({ onClose, onSaved }) {
           <div><span className="font-bold text-slate-400">Email:</span> <span className="font-semibold text-slate-700">{restaurant.email || '—'}</span></div>
           <div><span className="font-bold text-slate-400">Type:</span> <span className="font-semibold text-slate-700">{restaurant.businessType?.replace(/_/g, ' ')}</span></div>
           <div className="col-span-2"><span className="font-bold text-slate-400">Address:</span> <span className="font-semibold text-slate-700">{restaurant.address}, {restaurant.city}, {restaurant.state}, {restaurant.country} {restaurant.pincode}</span></div>
-          {restaurant.gstNumber && <div><span className="font-bold text-slate-400">GST:</span> <span className="font-semibold text-slate-700">{restaurant.gstNumber}</span></div>}
-          {restaurant.fssaiNumber && <div><span className="font-bold text-slate-400">FSSAI:</span> <span className="font-semibold text-slate-700">{restaurant.fssaiNumber}</span></div>}
+          {restaurant.gstNumber && <div><span className="font-bold text-slate-400">Tax No:</span> <span className="font-semibold text-slate-700">{restaurant.gstNumber}</span></div>}
+          {restaurant.fssaiNumber && <div><span className="font-bold text-slate-400">License No:</span> <span className="font-semibold text-slate-700">{restaurant.fssaiNumber}</span></div>}
         </div>
       </div>
 

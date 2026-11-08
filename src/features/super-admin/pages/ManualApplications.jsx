@@ -350,7 +350,7 @@ function ApplicationDetail({ applicationId, onBack, onChanged }) {
           <Info label="Owner" value={app.ownerName} />
           <Info label="Email" value={app.email} />
           <Info label="Phone" value={app.phone} />
-          <Info label="GST / Tax" value={app.gstNumber} />
+          <Info label="Tax Number" value={app.gstNumber} />
           <Info label="Registration No." value={app.registrationNumber} />
           <div className="col-span-2 md:col-span-3">
             <Info label="Address" value={[app.address, app.city, app.state, app.country, app.pincode].filter(Boolean).join(', ')} />

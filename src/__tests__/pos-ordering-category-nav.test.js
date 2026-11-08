@@ -258,8 +258,8 @@ check(/className="hidden lg:inline-flex[\s\S]{0,240}Collapse categories/.test(wi
   'the toggle is desktop-only (hidden below lg)');
 sub('Collapsed rail: icons, active highlight, tooltips');
 check(/const categoryIconFor = \(name\) => \{/.test(wizard)
-  && /return rule \? rule\[1\] : UtensilsCrossed;/.test(wizard),
-  'every category resolves an icon with a UtensilsCrossed fallback');
+  && /return rule \? rule\[1\] : Package;/.test(wizard),
+  'every category resolves an icon with a generic Package fallback (no food glyph for non-food categories)');
 check(/const CategoryIcon = categoryIconFor\(cat\.name\);/.test(wizard)
   && /<CategoryIcon className="hidden lg:block w-4 h-4 shrink-0"/.test(wizard),
   'restaurant PC rows render their icon from lg (visible alone when collapsed, absent on tablet)');

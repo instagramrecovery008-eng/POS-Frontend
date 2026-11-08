@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Search, Plus, Minus, ShoppingCart, Trash, X, User, Phone, CreditCard,
-  ArrowLeft, ChevronLeft, Package, LayoutGrid, UtensilsCrossed,
+  ArrowLeft, ChevronLeft, Package, LayoutGrid,
   ScanBarcode, AlertTriangle, ScanLine,
 } from 'lucide-react';
 import { useCartStore, useUiStore, useSettingsStore, useAuthStore } from '../../../../store';
@@ -14,6 +14,9 @@ import { openKotPrintWindow, closeKotPrintWindow } from '../../../../services/pr
 import { useSocketEvent } from '../../../../hooks/useSocket';
 import { PLACEHOLDER_IMAGE } from '../../../../lib/imagePlaceholder';
 import { canHandleBilling } from '../../../../utils/permissions';
+import CustomerPicker from '../components/CustomerPicker';
+import ProductImage from '../../../../components/common/ProductImage';
+import { formatCurrency } from '../../../../lib/utils';
 // Shared Category → Subcategory → Item hierarchy (Parts 2/9) — the SAME rule set
 // as the Menu Manager and the full POS wizard; no second filtering system.
 import { filterMenuItems, subcategoryTabsFor, SUBCATEGORY_ALL } from '../../../../utils/menuHierarchy';
@@ -22,6 +25,7 @@ const ICON_MAP = {
   utensils: '🍽️', pizza: '🍕', hamburger: '🍔', coffee: '☕',
   wine: '🍷', cake: '🎂', 'ice-cream': '🍦', salad: '🥗',
   fish: '🐟', drumstick: '🍗', bread: '🍞', cheese: '🧀',
+  paint: '🎨', tiles: '🧱', flask: '🧪', brush: '🖌️', shield: '🛡️', link: '🔗', tools: '🛠️', box: '📦',
   apple: '🍎', cup: '🥤', beer: '🍺',
 };
 
@@ -30,7 +34,7 @@ export default function PosWorkspace() {
   // Dietary indicators only for food verticals (§10) — retail product cards
   // show no veg/non-veg marks. One capability check, not scattered flags.
   const isDietaryBusiness = (settings.capabilities || getBusinessCapabilities(settings.businessType)).dietary === true;
-  const currency = settings?.currencySymbol || '₹';
+  const currency = settings?.currencySymbol || '';
   const { activeOrderTakingId, setScreen, setCheckoutOrderId, addToast, goBack, refreshTrigger, incrementRefreshTrigger } = useUiStore();
   const { user } = useAuthStore();
   // The Payment action opens the billing overlay — restricted to billing-capable
@@ -61,6 +65,8 @@ export default function PosWorkspace() {
   const [orderType, setOrderType] = useState(floorManagementOff ? 'Takeaway' : 'Dine In');
   const [guestCount, setGuestCount] = useState(2);
   const [customerName, setCustomerName] = useState('');
+  // Registered customer chosen for THIS order (null = Walk-in). Its id travels with the order.
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [customerPhone, setCustomerPhone] = useState('');
   const [itemNotes, setItemNotes] = useState('');
   const [noteForItem, setNoteForItem] = useState(null);
@@ -201,13 +207,14 @@ export default function PosWorkspace() {
         image: m.image || PLACEHOLDER_IMAGE,
         isLive: m.isAvailable !== false,
         currentStock: m.currentStock,
+        minStock: m.minStock ?? 10,
         isVeg: m.isVeg !== false,
       }));
       const cats = (catResp.categories || []).map((c) => ({
         id: `cat-${c.id}`,
         name: c.name,
         color: c.color || '#16A34A',
-        icon: c.icon || 'utensils',
+        icon: c.icon || 'box',
         isActive: c.isActive !== false,
       }));
       const subs = (subResp?.data?.subcategories || subResp?.subcategories || []).map((s) => ({
@@ -359,6 +366,7 @@ export default function PosWorkspace() {
         orderType: isBasicPos ? 'COUNTER_SALE' : (orderType === 'Dine In' ? 'DINE_IN' : orderType === 'Takeaway' ? 'TAKEAWAY' : 'DELIVERY'),
         items: itemsPayload,
         notes: '',
+        ...(selectedCustomer?.id ? { customerId: selectedCustomer.id } : {}),
       });
       if (!resp.success || !resp.data) {
         throw new Error(resp.message || 'Failed to create order');
@@ -444,13 +452,14 @@ export default function PosWorkspace() {
         const backendOrderType = counterSaleMode
           ? 'COUNTER_SALE'
           : (orderType === 'Dine In' ? 'DINE_IN' : orderType === 'Takeaway' ? 'TAKEAWAY' : 'DELIVERY');
-        const resp = await orderApi.create({ orderType: backendOrderType, items: itemsPayload, notes: '' });
+        const resp = await orderApi.create({ orderType: backendOrderType, items: itemsPayload, notes: '', ...(selectedCustomer?.id ? { customerId: selectedCustomer.id } : {}) });
         if (resp.success && resp.data) {
           const order = resp.data;
           addToast(counterSaleMode
             ? `Counter sale #${order.orderNo || order.id} created! Opening payment...`
             : `Order #${order.orderNo || order.id} placed! Opening payment...`, 'success');
           setCartItems([]);
+          setSelectedCustomer(null);
           setCheckoutOrderId(order.id);
         } else {
           throw new Error(resp.message || 'Failed to create order');
@@ -556,7 +565,7 @@ export default function PosWorkspace() {
               className="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl shadow-sm"
               style={{ backgroundColor: `${cat.color}18`, border: `1px solid ${cat.color}40` }}
             >
-              {ICON_MAP[cat.icon] || '🍽️'}
+              {ICON_MAP[cat.icon] || '📦'}
             </div>
             <div className="text-center">
               <p className="text-sm font-extrabold text-slate-800" style={{ color: cat.color }}>{cat.name}</p>
@@ -568,7 +577,7 @@ export default function PosWorkspace() {
 
       {catsWithItems.length === 0 && (
         <div className="text-center py-20 text-slate-400 text-sm italic">
-          <UtensilsCrossed className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+          <Package className="w-10 h-10 text-slate-300 mx-auto mb-3" />
           No categories with available items found.
         </div>
       )}
@@ -581,7 +590,8 @@ export default function PosWorkspace() {
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-3">
         {filteredItems.map((item) => {
           const outOfStock = item.currentStock !== null && item.currentStock !== undefined && item.currentStock <= 0;
-          const lowStock = !outOfStock && item.currentStock !== null && item.currentStock < 10;
+          // Low stock follows the product's OWN reorder level (default 10), not a fixed number.
+          const lowStock = !outOfStock && item.currentStock !== null && item.currentStock !== undefined && item.currentStock <= (item.minStock ?? 10);
           return (
             <div
               key={item.id}
@@ -594,9 +604,8 @@ export default function PosWorkspace() {
                     : 'border-slate-200 hover:border-[#16A34A] hover:shadow-md'
               }`}
             >
-              <div className="relative h-24 rounded-none overflow-hidden border-b border-slate-100">
-                <img src={item.image} alt={item.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" loading="lazy" decoding="async"
-                  onError={(e) => { e.target.src = PLACEHOLDER_IMAGE; }} />
+              <div className="relative h-28 rounded-none overflow-hidden border-b border-slate-100 bg-white">
+                <ProductImage src={item.image} alt={item.name} width={360} className="w-full h-full" />
                 {isDietaryBusiness && (
                 <span className={`absolute top-1.5 left-1.5 w-4 h-4 rounded-sm border-2 flex items-center justify-center bg-white/90 ${
                   item.isVeg ? 'border-emerald-600' : 'border-red-600'
@@ -604,19 +613,21 @@ export default function PosWorkspace() {
                   <span className={`w-2 h-2 rounded-full ${item.isVeg ? 'bg-emerald-600' : 'bg-red-600'}`} />
                 </span>
                 )}
-                <span className="absolute bottom-1.5 right-1.5 bg-slate-900/80 text-white font-mono text-[10px] font-bold px-1.5 py-0.5 rounded">{currency}{item.price}</span>
                 {lowStock && (
                   <span className="absolute bottom-1.5 left-1.5 bg-red-500 text-white text-[8px] font-bold px-1.5 py-0.5 rounded">Low Stock</span>
                 )}
               </div>
               <div className="p-2.5">
-                <p className="text-[13px] font-extrabold text-slate-800 truncate">{item.name}</p>
+                <p className="text-[13px] font-extrabold text-slate-800 truncate" title={item.name}>{item.name}</p>
+                {(item.subcategoryName || item.category) && (
+                  <p className="text-[9px] font-semibold text-slate-400 truncate">{item.subcategoryName || item.category}</p>
+                )}
                 <div className="flex items-center justify-between mt-1">
-                  <p className="text-[13px] font-bold text-[#16A34A] font-mono">{currency}{item.price}</p>
+                  <p className="text-[13px] font-bold text-[#16A34A] font-mono">{formatCurrency(item.price)}</p>
                   {outOfStock ? (
                     <span className="text-[9px] font-bold text-slate-400">Out of stock</span>
                   ) : (
-                    <span className="text-[9px] font-bold text-slate-400">
+                    <span className={`text-[9px] font-bold ${lowStock ? 'text-red-500' : 'text-slate-400'}`}>
                       {item.currentStock !== null && item.currentStock !== undefined ? `${item.currentStock} left` : ''}
                     </span>
                   )}
@@ -686,7 +697,7 @@ export default function PosWorkspace() {
               <button key={cat.id} onClick={() => selectCategory(cat.name)}
                 className={`shrink-0 px-3 py-2 text-[11px] font-bold rounded-xl transition-all cursor-pointer ${selectedCategory === cat.name ? 'text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
                 style={selectedCategory === cat.name ? { backgroundColor: cat.color } : undefined}>
-                {ICON_MAP[cat.icon] || '🍽️'} {cat.name}
+                {ICON_MAP[cat.icon] || '📦'} {cat.name}
               </button>
             ))}
           </div>
@@ -749,6 +760,7 @@ export default function PosWorkspace() {
               </div>
             )}
           </div>
+          <div className="mb-2"><CustomerPicker customer={selectedCustomer} onChange={setSelectedCustomer} /></div>
           {!counterSaleMode && (
             <div className="flex items-center gap-2">
               <div className="flex items-center bg-white border rounded-lg text-[10px] font-bold">
@@ -900,6 +912,8 @@ export default function PosWorkspace() {
         guestCount={guestCount}
         setGuestCount={setGuestCount}
         customerName={customerName}
+        selectedCustomer={selectedCustomer}
+        setSelectedCustomer={setSelectedCustomer}
         setShowCustomerModal={setShowCustomerModal}
         updateQty={updateQty}
         removeFromCart={removeFromCart}
@@ -923,7 +937,7 @@ function MobileCart({
   items, count, subtotal, discount, total, currency,
   counterSaleMode, isBasicPos, canBill, tablesCapable, floorManagementOff,
   submitting, activeOrderTakingId, orderType, setOrderType,
-  guestCount, setGuestCount, customerName, setShowCustomerModal,
+  guestCount, setGuestCount, customerName, selectedCustomer, setSelectedCustomer, setShowCustomerModal,
   updateQty, removeFromCart, setNoteForItem, setItemNotes,
   onClear, onPlaceOrder, onPayment, ICON_MAP,
 }) {
@@ -1001,6 +1015,7 @@ function MobileCart({
                   </button>
                 </div>
               </div>
+              <div className="mt-2"><CustomerPicker customer={selectedCustomer} onChange={setSelectedCustomer} /></div>
               {!counterSaleMode && (
                 <div className="flex items-center gap-2 mt-2">
                   <div className="flex items-center bg-white border rounded-lg text-[10px] font-bold">

@@ -210,11 +210,11 @@ export default function RestaurantForm({ restaurant, onClose, onSaved }) {
             <h3 className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">Legal & Address</h3>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-600">GST Number</label>
+                <label className="text-[10px] font-bold text-slate-600">Tax Number</label>
                 <input value={form.gstNumber} onChange={e => handleChange('gstNumber', e.target.value)} className="w-full h-9 px-3 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold outline-none focus:border-[#16A34A]" />
               </div>
               <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-600">FSSAI Number</label>
+                <label className="text-[10px] font-bold text-slate-600">Business License Number</label>
                 <input value={form.fssaiNumber} onChange={e => handleChange('fssaiNumber', e.target.value)} className="w-full h-9 px-3 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold outline-none focus:border-[#16A34A]" />
               </div>
               <div className="space-y-1 col-span-2">

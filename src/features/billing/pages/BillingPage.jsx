@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { formatCurrency, roundMoney, toMinor, getCurrencyDigits } from '../../../lib/utils';
 import {
   Check, Printer, X, Percent, CreditCard, Smartphone,
   SplitSquareVertical, RotateCcw, Ticket,
@@ -28,7 +29,8 @@ function NumericKeypad({ onPress, onClear, onBackspace, className = '' }) {
     [1, 2, 3],
     [4, 5, 6],
     [7, 8, 9],
-    ['C', 0, '⌫'],
+    ['.', 0, '⌫'],
+    ['C'],
   ];
   return (
     <div className={`grid grid-cols-3 gap-1.5 ${className}`}>
@@ -39,12 +41,12 @@ function NumericKeypad({ onPress, onClear, onBackspace, className = '' }) {
           onClick={() => {
             if (key === 'C') onClear();
             else if (key === '⌫') onBackspace();
-            else if (typeof key === 'number') onPress(key);
+            else onPress(key);
           }}
           data-key={key}
-          className="h-11 sm:h-12 text-sm font-bold bg-white hover:bg-slate-100 border border-slate-200 
+          className={`${key === 'C' ? 'col-span-3 ' : ''}h-11 sm:h-12 text-sm font-bold bg-white hover:bg-slate-100 border border-slate-200 
             hover:border-slate-300 rounded-xl transition-all active:scale-95 cursor-pointer
-            disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled:opacity-50 disabled:cursor-not-allowed`}
         >
           {key === 'C' ? (
             <span className="text-red-500 text-xs font-bold">CLEAR</span>
@@ -140,7 +142,7 @@ function DiscountPanel({
   const previewDiscount = calculateDiscount(type, sanitized, subtotal);
   const previewBase = subtotal - previewDiscount + serviceCharge + taxAmount;
   const previewRoundOff = roundOffEnabled
-    ? Number((Math.round(previewBase) - previewBase).toFixed(2))
+    ? roundMoney(Math.round(previewBase) - previewBase)
     : 0;
   const previewPayable = Math.max(0, previewBase + previewRoundOff);
 
@@ -236,7 +238,7 @@ function DiscountPanel({
                 border border-slate-200 rounded-xl text-slate-800 outline-none focus:border-[#16A34A] focus:bg-white transition-all"
             />
             <p className="mt-1.5 text-[9px] font-bold text-slate-400 text-right">
-              {type === 'PERCENTAGE' ? `Discount = ${currency}${previewDiscount.toFixed(2)} (${sanitized || 0}%)` : `Discount = ${currency}${previewDiscount.toFixed(2)}`}
+              {type === 'PERCENTAGE' ? `Discount = ${formatCurrency(previewDiscount)} (${sanitized || 0}%)` : `Discount = ${formatCurrency(previewDiscount)}`}
             </p>
             <DiscountKeypad
               onPress={(k) => setValue((p) => sanitizeDiscountInput(p + k))}
@@ -251,19 +253,19 @@ function DiscountPanel({
               <div key={row.label} className="flex justify-between text-[11px]">
                 <span className={row.negative ? 'text-red-600 font-semibold' : 'text-slate-500'}>{row.label}</span>
                 <span className={`font-mono font-bold ${row.negative ? 'text-red-600' : 'text-slate-700'}`}>
-                  {row.negative ? `-${currency}${Math.abs(row.value).toFixed(2)}` : `${currency}${row.value.toFixed(2)}`}
+                  {row.negative ? `-${formatCurrency(Math.abs(row.value))}` : `${formatCurrency(row.value)}`}
                 </span>
               </div>
             ))}
             {previewRoundOff !== 0 && (
               <div className="flex justify-between text-[11px]">
                 <span className="text-slate-500">Round Off</span>
-                <span className="font-mono font-bold text-slate-600">{currency}{previewRoundOff.toFixed(2)}</span>
+                <span className="font-mono font-bold text-slate-600">{formatCurrency(previewRoundOff)}</span>
               </div>
             )}
             <div className="flex justify-between text-sm font-extrabold border-t border-slate-200 pt-2 mt-1">
               <span className="text-[#16A34A]">Payable</span>
-              <span className="font-mono text-[#16A34A]">{currency}{previewPayable.toFixed(2)}</span>
+              <span className="font-mono text-[#16A34A]">{formatCurrency(previewPayable)}</span>
             </div>
           </div>
 
@@ -304,14 +306,14 @@ function AppliedDiscount({ discountType, discountValue, discountAmount, currency
   const label = discountType === 'PERCENTAGE'
     ? `Discount ${Number(discountValue || 0)}%`
     : discountType === 'FLAT' && Number(discountValue || 0) > 0
-      ? `Discount ${currency}${Number(discountValue).toFixed(0)}`
+      ? `Discount ${formatCurrency(Number(discountValue))}`
       : 'Discount';
   return (
     <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-2.5 py-1.5 min-w-0">
       <Percent className="w-3.5 h-3.5 text-red-500 shrink-0" />
       <div className="min-w-0 flex-1">
         <p className="text-[10px] font-bold text-red-700 truncate leading-tight">{label}</p>
-        <p className="text-[10px] font-mono font-bold text-red-500">-{currency}{discountAmount.toFixed(2)}</p>
+        <p className="text-[10px] font-mono font-bold text-red-500">-{formatCurrency(discountAmount)}</p>
       </div>
       <button
         onClick={onEdit}
@@ -678,20 +680,30 @@ function CashPayment({ amount, onAmountChange, grandTotal, currency }) {
   const [input, setInput] = useState('');
 
   const received = parseFloat(input) || 0;
-  const balance = received >= grandTotal ? received - grandTotal : 0;
-  const remaining = received < grandTotal ? grandTotal - received : 0;
+  // Compare in integer minor units — no float drift.
+  const receivedMinor = toMinor(received);
+  const totalMinor = toMinor(grandTotal);
+  const change = receivedMinor > totalMinor ? roundMoney(received - grandTotal) : 0;
+  const due = receivedMinor < totalMinor ? roundMoney(grandTotal - received) : 0;
 
   const handleKeyPress = (digit) => {
     setInput((prev) => {
+      if (digit === '.') {
+        if (getCurrencyDigits() === 0 || prev.includes('.')) return prev;
+        return (prev || '0') + '.';
+      }
       const next = prev + String(digit);
-      return next.length <= 8 ? next : prev;
+      const frac = next.split('.')[1];
+      if (frac && frac.length > getCurrencyDigits()) return prev;
+      return next.length <= 10 ? next : prev;
     });
   };
 
   const handleClear = () => setInput('');
   const handleBackspace = () => setInput((prev) => prev.slice(0, -1));
   const handleQuickAmount = (amt) => setInput(String(amt));
-  const handleExactAmount = () => setInput(String(Math.ceil(grandTotal)));
+  // Exact = the real grand total, to the currency's own precision.
+  const handleExactAmount = () => setInput(String(roundMoney(grandTotal)));
 
   useEffect(() => {
     onAmountChange(received);
@@ -699,27 +711,21 @@ function CashPayment({ amount, onAmountChange, grandTotal, currency }) {
 
   return (
     <div className="space-y-3">
-      <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-center">
-        <label className="text-[9px] font-bold uppercase text-slate-400 tracking-wider">
-          Amount Received
-        </label>
-        <p className="text-2xl font-extrabold font-mono text-slate-800 mt-1">
-          {input ? `${currency} ${parseFloat(input).toLocaleString('en-IN')}` : `${currency} 0`}
-        </p>
-        {received > 0 && (
-          <div className="flex justify-center gap-4 mt-2 text-[10px] font-bold">
-            {balance > 0 && (
-              <span className="text-emerald-600">
-                Balance: {currency} {balance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-              </span>
-            )}
-            {remaining > 0 && (
-              <span className="text-amber-600">
-                Due: {currency} {remaining.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-              </span>
-            )}
-          </div>
-        )}
+      <div className="grid grid-cols-3 gap-2 text-center">
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-2">
+          <p className="text-[9px] font-bold uppercase text-slate-400 tracking-wider">Amount Due</p>
+          <p className="text-sm font-extrabold font-mono text-slate-800 mt-0.5">{formatCurrency(grandTotal)}</p>
+        </div>
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-2">
+          <p className="text-[9px] font-bold uppercase text-slate-400 tracking-wider">Amount Received</p>
+          <p className="text-sm font-extrabold font-mono text-slate-800 mt-0.5">{formatCurrency(received)}</p>
+        </div>
+        <div className={`border rounded-xl p-2 ${due > 0 ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`}>
+          <p className="text-[9px] font-bold uppercase text-slate-400 tracking-wider">{due > 0 ? 'Balance Due' : 'Change Returned'}</p>
+          <p className={`text-sm font-extrabold font-mono mt-0.5 ${due > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
+            {formatCurrency(due > 0 ? due : change)}
+          </p>
+        </div>
       </div>
 
       {/* Quick Amounts */}
@@ -730,7 +736,7 @@ function CashPayment({ amount, onAmountChange, grandTotal, currency }) {
           className="px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 
             rounded-lg text-[9px] font-bold hover:bg-emerald-100 transition-all cursor-pointer"
         >
-          Exact
+          Exact Amount
         </button>
         {QUICK_AMOUNTS.map((amt) => (
           <button
@@ -740,7 +746,7 @@ function CashPayment({ amount, onAmountChange, grandTotal, currency }) {
             className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 
               rounded-lg text-[10px] font-bold transition-all cursor-pointer"
           >
-            {currency} {amt}
+            {formatCurrency(amt)}
           </button>
         ))}
       </div>
@@ -774,7 +780,7 @@ function CardPayment({ onDetailsChange, currency, grandTotal }) {
       <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-center">
         <CreditCard className="w-8 h-8 text-blue-500 mx-auto mb-1" />
         <p className="text-lg font-bold font-mono text-slate-800">
-          {currency} {grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+          {formatCurrency(grandTotal)}
         </p>
       </div>
 
@@ -849,7 +855,7 @@ function UpiPayment({ onDetailsChange, currency, grandTotal }) {
       <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-center">
         <Smartphone className="w-8 h-8 text-purple-500 mx-auto mb-1" />
         <p className="text-lg font-bold font-mono text-slate-800">
-          {currency} {grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+          {formatCurrency(grandTotal)}
         </p>
         <p className="text-[9px] text-slate-400 mt-1">Scan any UPI app to pay</p>
       </div>
@@ -933,7 +939,7 @@ function SplitPayment({ onPaymentsChange, grandTotal, currency }) {
     if (splits.length > 1 && Math.abs(remaining) > 0.01) {
       const last = splits.length - 1;
       const adjusted = [...splits];
-      const newAmt = Number((Number(adjusted[last].amount) + remaining).toFixed(2));
+      const newAmt = roundMoney(Number(adjusted[last].amount) + remaining);
       adjusted[last] = { ...adjusted[last], amount: Math.max(0, newAmt) };
       setSplits(adjusted);
       onPaymentsChange(adjusted);
@@ -944,10 +950,10 @@ function SplitPayment({ onPaymentsChange, grandTotal, currency }) {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <span className="text-[10px] font-bold text-slate-400 uppercase">
-          Total: {currency} {grandTotal.toFixed(2)}
+          Total: {formatCurrency(grandTotal)}
         </span>
         <span className={`text-[10px] font-bold ${Math.abs(remaining) < 0.5 ? 'text-emerald-600' : 'text-red-500'}`}>
-          {Math.abs(remaining) < 0.5 ? '✓ Balanced' : `Remaining: ${currency} ${remaining.toFixed(2)}`}
+          {Math.abs(remaining) < 0.5 ? '✓ Balanced' : `Remaining: ${formatCurrency(remaining)}`}
         </span>
       </div>
 
@@ -1042,14 +1048,14 @@ function SuccessScreen({ bill, currency, cashReceived, onPrint, onReprint, onDon
   const discountLabel = bill?.discountType === 'PERCENTAGE'
     ? `Discount (${Number(bill.discountValue || 0)}%)`
     : bill?.discountType === 'FLAT' && Number(bill.discountValue || 0) > 0
-      ? `Discount (${currency}${Number(bill.discountValue).toFixed(0)})`
+      ? `Discount (${formatCurrency(Number(bill.discountValue))})`
       : 'Discount';
 
   // Real persisted transaction references only — never generated here
   const txns = payments.map((p) => p.transactionId).filter(Boolean);
   const status = bill?.paymentStatus || bill?.status || 'PAID';
 
-  const fmt = (n) => currency + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+  const fmt = (n) => formatCurrency(n);
 
   const Row = ({ label, value, strong, green, red, mono }) => (
     <div className="flex items-center justify-between gap-3 min-w-0">
@@ -1190,7 +1196,7 @@ export default function BillingPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
 
-  const currency = settings?.currencySymbol || '₹';
+  const currency = settings?.currencySymbol || '';
 
   // ── Fetch order from backend on mount ──
   useEffect(() => {
@@ -1231,13 +1237,15 @@ export default function BillingPage() {
     if (!orderDetails) return 0;
     // Backend order has orderItems, local has items
     const items = orderDetails.orderItems || orderDetails.items || [];
-    return items.reduce((acc, i) => acc + (Number(i.price) * (i.quantity || 1)), 0);
+    return roundMoney(items.reduce((acc, i) => acc + (Number(i.price) * (i.quantity || 1)), 0));
   }, [orderDetails]);
 
   const taxAmount = useMemo(() => {
     if (!orderDetails) return 0;
-    return Number(orderDetails.taxAmount) || (subtotal * (settings?.taxPercentage || 0) / 100);
-  }, [orderDetails, subtotal, settings]);
+    // The persisted order tax is authoritative (the backend validates the payment
+    // against it) — never re-derive tax from a settings percentage here.
+    return roundMoney(Number(orderDetails.taxAmount) || 0);
+  }, [orderDetails]);
 
   // ── Cashier discount amount — recomputed live on every keystroke ──
   const discountAmount = useMemo(
@@ -1256,10 +1264,11 @@ export default function BillingPage() {
   // ── Round Off: auto-calculate if enabled in settings ──
   const baseTotal = subtotal - totalDiscountAmount + serviceCharge + taxAmount;
   const roundOffEnabled = settings?.roundOffEnabled !== false;
+  const baseTotalR = roundMoney(baseTotal);
   const roundOff = roundOffEnabled
-    ? Number((Math.round(baseTotal) - baseTotal).toFixed(2))
+    ? roundMoney(Math.round(baseTotalR) - baseTotalR)
     : 0;
-  const grandTotal = Math.max(0, baseTotal + roundOff);
+  const grandTotal = Math.max(0, roundMoney(baseTotalR + roundOff));
 
   // ── Payment building ──
   const buildPayments = useCallback(() => {
@@ -1279,7 +1288,7 @@ export default function BillingPage() {
 
     if (activeTab === 'CASH') {
       // Never send more than the payable — any excess is returned as change.
-      amount = cashReceived > 0 ? Math.min(cashReceived, grandTotal) : grandTotal;
+      amount = grandTotal; // validated above; any excess cash is change, never recorded as payment
     } else if (activeTab === 'CARD') {
       transactionId = cardDetails?.transactionId || `CARD${Date.now()}`;
     } else if (activeTab === 'UPI') {
@@ -1295,10 +1304,19 @@ export default function BillingPage() {
     if (!canBill) return; // KITCHEN / WAITER must never collect payment (defense in depth)
     if (collectingRef.current) return; // double-tap guard
 
-    // Validate
-    if (activeTab === 'CASH' && cashReceived < grandTotal && cashReceived > 0) {
-      setError(`Received amount (${currency}${cashReceived.toFixed(2)}) is less than total`);
+    // Validate (integer minor units — no float drift)
+    if (activeTab === 'CASH' && toMinor(cashReceived) < toMinor(grandTotal)) {
+      setError(cashReceived > 0
+        ? `Received amount (${formatCurrency(cashReceived)}) is less than the total (${formatCurrency(grandTotal)})`
+        : `Enter the amount received, or tap Exact Amount (${formatCurrency(grandTotal)})`);
       return;
+    }
+    if (activeTab === 'SPLIT') {
+      const splitMinor = splitPayments.reduce((sum, p) => sum + toMinor(p.amount), 0);
+      if (splitMinor !== toMinor(grandTotal)) {
+        setError(`Split payments (${formatCurrency(splitMinor / 10 ** getCurrencyDigits())}) must add up to the total (${formatCurrency(grandTotal)})`);
+        return;
+      }
     }
 
     setError('');
@@ -1394,6 +1412,8 @@ export default function BillingPage() {
       fssaiNumber: resolveIdentity('fssaiNumber', () => settings?.fssaiNumber),
       logo: resolveIdentity('logo', () => settings?.branding?.logo),
       receiptFooter: resolveIdentity('receiptFooter', () => settings?.receiptFooterMessage),
+      // Currency the bill was ISSUED in (server value); the company's current one only as a fallback
+      currency: src.currency || bill?.currency || billIdentity.currency || settings?.currency || '',
       // Bill identifiers
       billNo: src.billNo || String(billId || ''),
       orderNo: order?.orderNo || String(order?.id || ''),
@@ -1671,7 +1691,10 @@ export default function BillingPage() {
     const orderName = orderDetails?.orderNo || orderDetails?.orderNumber || `#${checkoutOrderId}`;
     const tableName = orderDetails?.table?.tableNo || orderDetails?.tableName || '-';
     const orderType = orderDetails?.orderType || 'DINE_IN';
-    const customerName = orderDetails?.customer?.name || orderDetails?.customerName || '';
+    // Customer comes from the order's own customerId (fetched with the order). Only a
+    // genuinely unselected customer shows as Walk-in — a registered name is never replaced.
+    const customerName = orderDetails?.customer?.name || orderDetails?.customerName || 'Walk-in Customer';
+    const customerPhone = orderDetails?.customer?.phone || orderDetails?.customerPhone || '';
     const allItems = orderDetails?.orderItems || orderDetails?.items || [];
     const status = orderDetails?.status || 'PENDING';
     // §23: counter orders (BASIC_POS) never show table/dine-in terminology —
@@ -1709,7 +1732,7 @@ export default function BillingPage() {
           </div>
           <div className="flex items-center gap-3 text-[9px] text-slate-500 font-semibold mt-1">
             {orderType === 'DINE_IN' && tableName !== '-' && <span>Table: {tableName}</span>}
-            {customerName && <span>Customer: {customerName}</span>}
+            <span>Customer: <span className="font-bold text-slate-700">{customerName}</span>{customerPhone ? ` · ${customerPhone}` : ''}</span>
             {orderDetails?.kot?.[0]?.kotNo && (
               <span className="flex items-center gap-1">
                 <FileText className="w-3 h-3 text-amber-500" />
@@ -1772,7 +1795,7 @@ export default function BillingPage() {
                   </div>
                 </div>
                 <span className="text-[11px] font-bold font-mono text-slate-700 shrink-0 ml-2">
-                  {currency}{(price * qty).toFixed(0)}
+                  {formatCurrency((price * qty))}
                 </span>
               </div>
             );
@@ -1831,7 +1854,7 @@ export default function BillingPage() {
         <div className="border-t border-slate-200 px-4 py-3 bg-slate-50/50 space-y-1.5">
           <div className="flex justify-between text-[11px]">
             <span className="text-slate-500">Subtotal</span>
-            <span className="font-mono font-bold text-slate-700">{currency}{subtotal.toFixed(2)}</span>
+            <span className="font-mono font-bold text-slate-700">{formatCurrency(subtotal)}</span>
           </div>
           {promotionDiscountTotal > 0 && (
             <div className="space-y-1">
@@ -1847,7 +1870,7 @@ export default function BillingPage() {
                       <X className="w-3 h-3" />
                     </button>
                   </div>
-                  <span className="font-mono font-bold text-red-600 shrink-0">-{currency}{Number(od.discountAmount).toFixed(2)}</span>
+                  <span className="font-mono font-bold text-red-600 shrink-0">-{formatCurrency(Number(od.discountAmount))}</span>
                 </div>
               ))}
             </div>
@@ -1859,7 +1882,7 @@ export default function BillingPage() {
                   {discountType === 'PERCENTAGE'
                     ? `Discount (${Number(discountValue || 0)}%)`
                     : discountType === 'FLAT' && Number(discountValue || 0) > 0
-                      ? `Discount (${currency}${Number(discountValue).toFixed(0)})`
+                      ? `Discount (${formatCurrency(Number(discountValue))})`
                       : 'Discount'}
                 </span>
                 <button
@@ -1877,26 +1900,26 @@ export default function BillingPage() {
                   <X className="w-3 h-3" />
                 </button>
               </div>
-              <span className="font-mono font-bold text-red-600 shrink-0">-{currency}{discountAmount.toFixed(2)}</span>
+              <span className="font-mono font-bold text-red-600 shrink-0">-{formatCurrency(discountAmount)}</span>
             </div>
           )}
           <div className="flex justify-between text-[11px]">
             <span className="text-slate-500">Tax</span>
-            <span className="font-mono font-bold text-slate-700">{currency}{taxAmount.toFixed(2)}</span>
+            <span className="font-mono font-bold text-slate-700">{formatCurrency(taxAmount)}</span>
           </div>
           <div className="flex justify-between text-[11px]">
             <span className="text-slate-500">Service Charge</span>
-            <span className="font-mono font-bold text-slate-700">{currency}{serviceCharge.toFixed(2)}</span>
+            <span className="font-mono font-bold text-slate-700">{formatCurrency(serviceCharge)}</span>
           </div>
           {roundOffEnabled && roundOff !== 0 && (
             <div className="flex justify-between text-[11px]">
               <span className="text-slate-500">Round Off</span>
-              <span className="font-mono font-bold text-slate-600">{currency}{roundOff.toFixed(2)}</span>
+              <span className="font-mono font-bold text-slate-600">{formatCurrency(roundOff)}</span>
             </div>
           )}
           <div className="flex justify-between text-sm font-extrabold text-slate-800 border-t border-slate-200 pt-2 mt-1">
             <span className="text-[#16A34A]">Grand Total</span>
-            <span className="font-mono text-[#16A34A]">{currency}{grandTotal.toFixed(2)}</span>
+            <span className="font-mono text-[#16A34A]">{formatCurrency(grandTotal)}</span>
           </div>
         </div>
       </div>
@@ -1996,7 +2019,7 @@ export default function BillingPage() {
                 {orderDiscounts.map((od) => (
                   <span key={`chip-${od.id}`} className="inline-flex items-center gap-1 bg-red-50 border border-red-200 rounded-lg px-2 py-1">
                     <span className="text-[9px] font-bold text-red-700 truncate max-w-[180px]">{od.discountLabel || od.discountName}</span>
-                    <span className="text-[9px] font-mono font-bold text-red-500">-{currency}{Number(od.discountAmount).toFixed(2)}</span>
+                    <span className="text-[9px] font-mono font-bold text-red-500">-{formatCurrency(Number(od.discountAmount))}</span>
                     <button onClick={() => handleRemoveApplied(od.id)} className="text-red-400 hover:text-red-600 cursor-pointer p-0.5" aria-label={`Remove ${od.discountName}`}>
                       <X className="w-3 h-3" />
                     </button>
@@ -2015,7 +2038,7 @@ export default function BillingPage() {
               </button>
             )}
             <span className="text-xs font-extrabold text-slate-800 shrink-0">
-              {currency}{grandTotal.toFixed(2)}
+              {formatCurrency(grandTotal)}
             </span>
           </div>
 
@@ -2044,7 +2067,7 @@ export default function BillingPage() {
               </button>
             )}
             <span className="text-xs font-extrabold text-slate-800 shrink-0">
-              {currency}{grandTotal.toFixed(2)}
+              {formatCurrency(grandTotal)}
             </span>
           </div>
 
@@ -2067,7 +2090,7 @@ export default function BillingPage() {
             </button>
             <button
               onClick={handleCollectPayment}
-              disabled={loading || grandTotal <= 0}
+              disabled={loading || grandTotal <= 0 || (activeTab === 'CASH' && toMinor(cashReceived) < toMinor(grandTotal))}
               className="flex-1 h-11 bg-[#16A34A] hover:bg-[#15803D] disabled:bg-slate-300 
                 disabled:cursor-not-allowed text-white font-extrabold rounded-xl text-xs 
                 uppercase tracking-wider flex items-center justify-center gap-2 
@@ -2081,7 +2104,7 @@ export default function BillingPage() {
               ) : (
                 <>
                   <Check className="w-5 h-5" />
-                  Collect {currency}{grandTotal.toFixed(0)}
+                  Collect {formatCurrency(grandTotal)}
                 </>
               )}
             </button>
@@ -2144,7 +2167,7 @@ export default function BillingPage() {
                 {orderDiscounts.map((od) => (
                   <span key={`mchip-${od.id}`} className="inline-flex items-center gap-1 bg-red-50 border border-red-200 rounded-lg px-2 py-1">
                     <span className="text-[9px] font-bold text-red-700 truncate max-w-[140px]">{od.discountLabel || od.discountName}</span>
-                    <span className="text-[9px] font-mono font-bold text-red-500">-{currency}{Number(od.discountAmount).toFixed(2)}</span>
+                    <span className="text-[9px] font-mono font-bold text-red-500">-{formatCurrency(Number(od.discountAmount))}</span>
                     <button onClick={() => handleRemoveApplied(od.id)} className="text-red-400 hover:text-red-600 cursor-pointer p-0.5" aria-label={`Remove ${od.discountName}`}>
                       <X className="w-3 h-3" />
                     </button>
@@ -2185,7 +2208,7 @@ export default function BillingPage() {
               </button>
               <div className="flex-1 min-w-0 text-right">
                 <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Payable</p>
-                <p className="font-mono font-extrabold text-lg text-[#16A34A] leading-tight">{currency}{grandTotal.toFixed(2)}</p>
+                <p className="font-mono font-extrabold text-lg text-[#16A34A] leading-tight">{formatCurrency(grandTotal)}</p>
               </div>
               <button
                 onClick={handleCollectPayment}
@@ -2200,7 +2223,7 @@ export default function BillingPage() {
                 ) : (
                   <>
                     <Check className="w-5 h-5" />
-                    Collect {currency}{grandTotal.toFixed(0)}
+                    Collect {formatCurrency(grandTotal)}
                   </>
                 )}
               </button>

@@ -30,7 +30,7 @@ const Row = ({ label, value }) => (
   </div>
 );
 
-export default function DiscountDetailModal({ discount, currency = '₹', onClose, onEdit }) {
+export default function DiscountDetailModal({ discount, currency = '', onClose, onEdit }) {
   const typeMeta = TYPE_META[discount.type] || TYPE_META.PERCENTAGE;
   const TypeIcon = typeMeta.icon;
 

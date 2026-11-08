@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { settingApi } from '../api/setting.api';
 import { BRAND } from '../config/company';
+import { setActiveCurrency, setActiveTimezone, getCurrencySymbol as libGetCurrencySymbol } from '../lib/utils';
 import { getBusinessCapabilities, isBasicPosFoodBusiness } from '../utils/businessCapabilities';
 
 // ── Keys that control module visibility in the sidebar & route guard ──────
@@ -117,10 +118,8 @@ function clearUiSettings() {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
-const getCurrencySymbol = (currency) => {
-  const symbols = { INR: '₹', USD: '$', EUR: '€', GBP: '£', AED: 'د.إ', SAR: '﷼', SGD: 'S$', AUD: 'A$' };
-  return symbols[currency] || currency;
-};
+// Symbol is derived from the ISO code via Intl (see lib/utils) — never a hardcoded table.
+const getCurrencySymbol = (currency) => libGetCurrencySymbol(currency);
 
 // ── Defaults ─────────────────────────────────────────────────────────────────
 const defaultSettings = {
@@ -145,9 +144,11 @@ const defaultSettings = {
   },
   // POS Configuration
   language: 'English',
-  currency: 'INR',
-  currencySymbol: '₹',
-  timezone: 'Asia/Kolkata',
+  // Company currency (ISO 4217) comes from the authenticated company's settings.
+  // No country default — empty until the company's settings load.
+  currency: '',
+  currencySymbol: '',
+  timezone: '',
   dateFormat: 'DD/MM/YYYY',
   timeFormat: '12h',
   numberFormat: '1,234.56',
@@ -792,6 +793,19 @@ const useSettingsStore = create((set, get) => ({
 
   clearError: () => set({ error: null }),
 }));
+
+// Keep the shared currency formatter in sync with the company's setting.
+// Runs on load, on every fetch/save, and when the company changes its currency.
+setActiveCurrency(useSettingsStore.getState().settings.currency);
+setActiveTimezone(useSettingsStore.getState().settings.timezone);
+useSettingsStore.subscribe((state, prev) => {
+  const c = state.settings?.currency;
+  if (c !== prev.settings?.currency) setActiveCurrency(c);
+  if (state.settings?.timezone !== prev.settings?.timezone) setActiveTimezone(state.settings?.timezone);
+  if (c !== undefined && state.settings.currencySymbol !== getCurrencySymbol(c)) {
+    useSettingsStore.setState({ settings: { ...state.settings, currencySymbol: getCurrencySymbol(c) } });
+  }
+});
 
 export default useSettingsStore;
 export { useSettingsStore };

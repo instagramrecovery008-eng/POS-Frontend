@@ -15,7 +15,7 @@ export default function MenuReports({ menuPerformance, topSelling, lowSelling, c
   const [sortBy, setSortBy] = useState('quantity');
   const fcVal = fc || formatCurrency;
   const { settings } = useSettingsStore();
-  const currencySymbol = settings?.currencySymbol || '₹';
+  const currencySymbol = settings?.currencySymbol || '';
   // §10: catalog-aware wording — "Menu" for food verticals, "Products" for
   // retail (via the centralized catalogNaming utility, no businessType checks).
   const naming = catalogNaming(settings?.businessType);

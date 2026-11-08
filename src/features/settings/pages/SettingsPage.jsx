@@ -13,6 +13,16 @@ import { FEATURE_FOR_SETTING, hasFeature } from '../../../utils/permissions';
 import { sanitizeNumeric } from '../../../utils/numericHelpers';
 import { resolveAssetUrl } from '../../../utils/assetUrl';
 import KotPrinterStatus from '../../kitchen/components/KotPrinterStatus';
+import { listCurrencies } from '../../../lib/utils';
+import { DOCUMENT_ICONS } from '../../../utils/documentIcons';
+
+// Global option lists (ISO 4217 currencies, IANA timezones) — not tied to any country.
+const CURRENCY_OPTIONS = listCurrencies();
+const TIMEZONE_OPTIONS = (() => {
+  let zones = [];
+  try { zones = Intl.supportedValuesOf('timeZone'); } catch { zones = ['UTC']; }
+  return zones.map((z) => ({ value: z, label: z.replace(/_/g, ' ') }));
+})();
 
 // ─── Reusable UI Components ─────────────────────────────────────────────────
 
@@ -138,7 +148,7 @@ const SECTIONS = [
   { key: 'pos', label: 'POS Config', icon: Settings },
   { key: 'pos_screen', label: 'POS Screen Settings', icon: Layout },
   { key: 'billing', label: 'Billing', icon: Receipt },
-  { key: 'tax', label: 'Tax & GST', icon: Percent },
+  { key: 'tax', label: 'Tax', icon: Percent },
   { key: 'printer', label: 'Printer', icon: Printer },
   { key: 'security', label: 'Security', icon: Shield },
 ];
@@ -298,7 +308,7 @@ export default function SettingsPage() {
     const mode = businessMode;
     switch (secKey) {
       case 'general':
-        labels.push('Restaurant Name', 'Owner Name', 'Email', 'Phone', 'TAX Number', 'FSSAI Number', 'Website', 'Address', 'City', 'State', 'Country', 'Postal Code', 'Restaurant Logo', 'Receipt Footer Message');
+        labels.push('Restaurant Name', 'Owner Name', 'Email', 'Phone', 'TAX Number', 'Business License Number', 'Website', 'Address', 'City', 'State', 'Country', 'Postal Code', 'Restaurant Logo', 'Receipt Footer Message');
         break;
       case 'pos':
         labels.push('Currency', 'Currency Symbol', 'Time Zone', 'Language');
@@ -318,7 +328,7 @@ export default function SettingsPage() {
         labels.push('Invoice Prefix', 'KOT Prefix', 'Bill Prefix', 'Bill Number Start', 'Round Off', 'Split Bill', 'Auto Print Bill');
         break;
       case 'tax':
-        labels.push('Tax Type', 'GST Rate', 'Service Charge');
+        labels.push('Tax Type', 'Tax Rate', 'Service Charge');
         break;
       case 'printer':
         labels.push('Printer Configuration');
@@ -675,7 +685,7 @@ export default function SettingsPage() {
 
             {/* Kitchen & KOT — only for kitchen-capable (food) businesses. */}
             {isKitchenBusiness && (
-            <SectionCard title="Kitchen & KOT" description="Kitchen ticket configuration" icon={ChefHat}>
+            <SectionCard title="Kitchen & KOT" description="Kitchen ticket configuration" icon={DOCUMENT_ICONS.kot}>
               <div className="flex items-center justify-between py-2.5 px-3 bg-slate-50 rounded-xl border border-slate-200">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
@@ -713,7 +723,7 @@ export default function SettingsPage() {
                 <FormField label="Email" type="email" value={settings.email} onChange={(v) => handleFieldChange('email', v)} />
                 <FormField label="Phone" value={settings.contactNumber} onChange={(v) => handleFieldChange('contactNumber', v)} />
                 <FormField label="TAX Number" value={settings.gstNumber} onChange={(v) => handleFieldChange('gstNumber', v)} />
-                <FormField label="FSSAI Number" value={settings.fssaiNumber || ''} onChange={(v) => handleFieldChange('fssaiNumber', v)} />
+                <FormField label="Business License Number" value={settings.fssaiNumber || ''} onChange={(v) => handleFieldChange('fssaiNumber', v)} />
                 <FormField label="Website" value={settings.website || ''} onChange={(v) => handleFieldChange('website', v)} />
               </FormGrid>
               <FormField label="Address" value={settings.address} onChange={(v) => handleFieldChange('address', v)} className="mt-1" />
@@ -766,25 +776,9 @@ export default function SettingsPage() {
         return (
           <SectionCard title="POS Configuration" description="Configure currency, time zone, and language" icon={Globe}>
             <FormGrid cols={3}>
-              <FormField label="Currency" value={settings.currency} onChange={(v) => handleFieldChange('currency', v)} options={[
-                { value: 'INR', label: '₹ INR (Indian Rupee)' },
-                { value: 'USD', label: '$ USD (US Dollar)' },
-                { value: 'EUR', label: '€ EUR (Euro)' },
-                { value: 'GBP', label: '£ GBP (British Pound)' },
-                { value: 'AED', label: 'د.إ AED (Dirham)' },
-                { value: 'SAR', label: '﷼ SAR (Saudi Riyal)' },
-                { value: 'SGD', label: 'S$ SGD (Singapore Dollar)' },
-                { value: 'AUD', label: 'A$ AUD (Australian Dollar)' },
-              ]} />
+              <FormField label="Currency" value={settings.currency} onChange={(v) => handleFieldChange('currency', v)} options={CURRENCY_OPTIONS} />
               <FormField label="Currency Symbol" value={settings.currencySymbol} disabled />
-              <FormField label="Time Zone" value={settings.timezone} onChange={(v) => handleFieldChange('timezone', v)} options={[
-                { value: 'Asia/Kolkata', label: 'Asia/Kolkata (UTC+5:30)' },
-                { value: 'Asia/Dubai', label: 'Asia/Dubai (UTC+4:00)' },
-                { value: 'Asia/Singapore', label: 'Asia/Singapore (UTC+8:00)' },
-                { value: 'Asia/Riyadh', label: 'Asia/Riyadh (UTC+3:00)' },
-                { value: 'America/New_York', label: 'America/New_York (UTC-5:00)' },
-                { value: 'Europe/London', label: 'Europe/London (UTC+0:00)' },
-              ]} />
+              <FormField label="Time Zone" value={settings.timezone} onChange={(v) => handleFieldChange('timezone', v)} options={TIMEZONE_OPTIONS} />
               <FormField label="Language" value={settings.language} onChange={(v) => handleFieldChange('language', v)} options={[
                 { value: 'English', label: 'English' },
               ]} disabled />
@@ -821,17 +815,17 @@ export default function SettingsPage() {
       case 'tax':
         return (
           <div className="space-y-5">
-            <SectionCard title="Tax Configuration" description="Configure GST, tax rates, and service charges" icon={Percent}>
+            <SectionCard title="Tax Configuration" description="Configure tax rates and service charges" icon={Percent}>
               <FormGrid cols={3}>
                 <FormField label="Tax Type" value={settings.taxType} onChange={(v) => handleFieldChange('taxType', v)} options={[
                   { value: 'Inclusive', label: 'Inclusive (Tax in Price)' },
                   { value: 'Exclusive', label: 'Exclusive (Tax at Checkout)' },
                 ]} />
-                <FormField label="GST Rate (%)" type="number" value={settings.gstPercentage} onChange={(v) => handleFieldChange('gstPercentage', v)} suffix="%" />
+                <FormField label="Tax Rate (%)" type="number" value={settings.gstPercentage} onChange={(v) => handleFieldChange('gstPercentage', v)} suffix="%" />
                 <FormField label="Service Charge (%)" type="number" value={settings.serviceCharge} onChange={(v) => handleFieldChange('serviceCharge', v)} suffix="%" />
               </FormGrid>
               <p className="text-[10px] text-slate-400 bg-slate-50 rounded-xl p-3 border border-slate-100">
-                GST Rate is used as the default tax for new menu items. The final tax on each order is
+                Tax Rate is used as the default tax for new menu items. The final tax on each order is
                 calculated from the item's own tax percentage at billing time.
               </p>
             </SectionCard>

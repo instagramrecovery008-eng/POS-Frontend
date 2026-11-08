@@ -3,6 +3,7 @@ import { useAuthStore, useSettingsStore, useCartStore, useUiStore } from '../../
 import { useSocketEvent } from '../../../hooks/useSocket';
 import { dashboardApi } from '../../../api/dashboard.api';
 import { formatCurrency } from '../../../lib/utils';
+import { DOCUMENT_ICONS } from '../../../utils/documentIcons';
 import { PLACEHOLDER_IMAGE } from '../../../lib/imagePlaceholder';
 import { getBusinessCapabilities } from '../../../utils/businessCapabilities';
 import {
@@ -12,7 +13,6 @@ import {
   Clock,
   RefreshCw,
   Bell,
-  UtensilsCrossed,
   Timer,
   ChefHat,
   AlertTriangle,
@@ -368,7 +368,7 @@ export default function DashboardPage() {
           <div className="flex flex-wrap gap-2 mt-1.5">
             {notifications.slice(0, 3).map(n => (
               <span key={n.id} className="inline-flex items-center gap-1 text-[10px] font-semibold bg-white border border-amber-100 rounded-lg px-2 py-1 text-amber-700">
-                {showKitchen ? <UtensilsCrossed className="w-3 h-3" /> : <ShoppingBag className="w-3 h-3" />} {n.message}
+                {showKitchen ? <DOCUMENT_ICONS.kot className="w-3 h-3" /> : <DOCUMENT_ICONS.counterSale className="w-3 h-3" />} {n.message}
               </span>
             ))}
           </div>

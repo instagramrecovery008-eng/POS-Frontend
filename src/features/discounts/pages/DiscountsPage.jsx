@@ -30,7 +30,7 @@ const STATUS_META = {
 const valueLabel = (d) =>
   d.type === 'PERCENTAGE' || d.type === 'STAFF'
     ? `${Number(d.discountValue)}%`
-    : `${d.currency || '₹'}${Number(d.discountValue)}`;
+    : `${d.currency || ''}${Number(d.discountValue)}`;
 
 const appliesToLabel = (d) => {
   if (d.scope === 'ENTIRE_ORDER') return 'Entire Order';
@@ -48,7 +48,7 @@ const fmtDate = (d) => {
 export default function DiscountsPage() {
   const { addToast } = useUiStore();
   const { settings } = useSettingsStore();
-  const currency = settings?.currencySymbol || '₹';
+  const currency = settings?.currencySymbol || '';
 
   const [discounts, setDiscounts] = useState(null);
   const [loading, setLoading] = useState(true);

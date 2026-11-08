@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Bar } from 'react-chartjs-2';
 import { Timer, ChefHat, BarChart3 } from 'lucide-react';
+import { DOCUMENT_ICONS } from '../../../utils/documentIcons';
 import { formatCurrency, formatDate, formatTime } from '../../../lib/utils';
 import ReportExportBar from '../../../components/common/ReportExportBar';
 
@@ -28,7 +29,7 @@ export default function KitchenReports({ kotRegister, kotSummary, kitchenPerform
   return (
     <div className="space-y-4">
       <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-[10px] font-bold">
-        {[{ key: 'summary', label: 'KOT Summary', icon: BarChart3 }, { key: 'register', label: 'KOT Register', icon: Timer }, { key: 'performance', label: 'Performance', icon: ChefHat }].map(t => (
+        {[{ key: 'summary', label: 'KOT Summary', icon: BarChart3 }, { key: 'register', label: 'KOT Register', icon: DOCUMENT_ICONS.kot }, { key: 'performance', label: 'Performance', icon: ChefHat }].map(t => (
           <button key={t.key} onClick={() => setSubTab(t.key)}
             className={`px-3 py-1.5 rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${subTab === t.key ? 'bg-white text-slate-800 shadow-xs' : 'text-slate-500 hover:text-slate-700'}`}>
             <t.icon className="w-3 h-3" /> {t.label}

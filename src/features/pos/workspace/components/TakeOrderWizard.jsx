@@ -59,7 +59,7 @@ const readDesktopRailViewport = () => {
 
 // ── Category icons (restaurant PC sidebar) ─────────────────────────────────
 // Deterministic keyword → icon mapping using the app's EXISTING lucide set (no
-// new icon dependency). Unmatched names fall back to UtensilsCrossed, so every
+// new icon dependency). Unmatched names fall back to the generic Package icon, so every
 // category always has a recognizable, labelled control in the collapsed rail.
 const CATEGORY_ICON_RULES = [
   [/pizza/i, Pizza],
@@ -77,7 +77,7 @@ const CATEGORY_ICON_RULES = [
 const categoryIconFor = (name) => {
   const label = String(name || '');
   const rule = CATEGORY_ICON_RULES.find(([pattern]) => pattern.test(label));
-  return rule ? rule[1] : UtensilsCrossed;
+  return rule ? rule[1] : Package;
 };
 
 const ORDER_TYPE_OPTIONS = [
@@ -170,7 +170,7 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
   const isRestaurantTenant = String(settings?.businessType || '').trim().toUpperCase() === 'RESTAURANT';
   const isDietaryBusiness = wizardCaps.dietary === true;
   const kotCapable = wizardCaps.kot === true;
-  const currency = settings?.currencySymbol || '₹';
+  const currency = settings?.currencySymbol || '';
   const isServiceStaff = String(user?.role || '').toUpperCase() === 'WAITER';
   const takeawayGranted = isExemptRole || (Array.isArray(assignedOrderTypes) && assignedOrderTypes.includes('TAKEAWAY'));
   const isPageMode = mode === 'page';
@@ -2050,7 +2050,7 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
         <div className="bg-slate-50 rounded-xl border border-slate-200 p-3.5 space-y-1.5 text-xs">
           <div className="flex justify-between text-slate-600"><span>Subtotal</span><span className="font-mono font-bold">{currency}{subtotal.toFixed(0)}</span></div>
           {settings?.taxType === 'Exclusive' && (
-            <div className="flex justify-between text-slate-500"><span>GST ({gstRate}%)</span><span className="font-mono">{currency}{taxAmount.toFixed(0)}</span></div>
+            <div className="flex justify-between text-slate-500"><span>Tax ({gstRate}%)</span><span className="font-mono">{currency}{taxAmount.toFixed(0)}</span></div>
           )}
           {serviceCharge > 0 && (
             <div className="flex justify-between text-slate-500"><span>Service Charge ({serviceCharge}%)</span><span className="font-mono">{currency}{serviceChargeAmount.toFixed(0)}</span></div>
@@ -2059,7 +2059,7 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
             <span>Grand Total</span><span className="font-mono text-[#16A34A]">{currency}{grandTotal.toFixed(0)}</span>
           </div>
           {settings?.taxType === 'Inclusive' && gstRate > 0 && (
-            <div className="text-[9px] text-slate-400 italic text-right">(incl. GST {gstRate}%)</div>
+            <div className="text-[9px] text-slate-400 italic text-right">(incl. Tax {gstRate}%)</div>
           )}
         </div>
 

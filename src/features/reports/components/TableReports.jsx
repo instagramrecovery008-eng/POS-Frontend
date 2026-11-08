@@ -13,7 +13,7 @@ export default function TableReports({ tableSales, tableOccupancy, loading, form
   const [subTab, setSubTab] = useState('sales');
   const fcVal = fc || formatCurrency;
   const { settings } = useSettingsStore();
-  const currencySymbol = settings?.currencySymbol || '₹';
+  const currencySymbol = settings?.currencySymbol || '';
 
   if (loading) return null;
 

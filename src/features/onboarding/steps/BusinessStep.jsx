@@ -279,7 +279,7 @@ export default function BusinessStep({ onBack, onDone, onExitToLogin }) {
 
           <Field label="Postal Code" value={form.pincode || ''} onChange={(e) => set('pincode', e.target.value)} />
 
-          <Field label="GST / Tax Number" placeholder="Optional"
+          <Field label="Tax Registration Number" placeholder="Optional"
             value={form.gstNumber || ''} onChange={(e) => set('gstNumber', e.target.value)} />
 
           <Field label="Business Registration Number" placeholder="Optional"
@@ -294,7 +294,7 @@ export default function BusinessStep({ onBack, onDone, onExitToLogin }) {
         <div className="mt-4 flex items-start gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5">
           <AlertTriangle className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
           <p className="text-[10px] font-semibold text-slate-500 leading-relaxed">
-            Jurisdiction-specific fields such as GST and registration number are optional.
+            Jurisdiction-specific fields such as tax and registration number are optional.
             You will upload at least one business document on the next step.
           </p>
         </div>

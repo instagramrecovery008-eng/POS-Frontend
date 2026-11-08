@@ -74,7 +74,7 @@ function Toggle({ checked, onChange, label }) {
 
 // ─── Main modal ──────────────────────────────────────────────────────────────
 
-export default function DiscountFormModal({ discount, currency = '₹', onClose, onSaved }) {
+export default function DiscountFormModal({ discount, currency = '', onClose, onSaved }) {
   const { addToast } = useUiStore();
   const { settings } = useSettingsStore();
   const isEdit = !!discount;
@@ -248,8 +248,8 @@ export default function DiscountFormModal({ discount, currency = '₹', onClose,
       valid: `${fmtD(startDate)}${startTime ? ` ${fmtT(startTime)}` : ''} → ${fmtD(endDate)}${endTime ? ` ${fmtT(endTime)}` : ''}`,
       days: selectedDays.length === 0 || selectedDays.length === 7 ? 'Every day' : DAY_LABELS.filter((d) => selectedDays.includes(d.short.toUpperCase() === d.short ? d.short.toUpperCase() : d.short)).map((d) => d.long).join(', ') || 'Every day',
       time: startTime || endTime ? `${fmtT(startTime)} – ${fmtT(endTime)}` : null,
-      minOrder: minimumOrderAmount ? `${currency}${Number(minimumOrderAmount).toLocaleString('en-IN')}` : null,
-      maxDiscount: maximumDiscountAmount ? `${currency}${Number(maximumDiscountAmount).toLocaleString('en-IN')}` : null,
+      minOrder: minimumOrderAmount ? `${currency}${Number(minimumOrderAmount).toLocaleString('en-US')}` : null,
+      maxDiscount: maximumDiscountAmount ? `${currency}${Number(maximumDiscountAmount).toLocaleString('en-US')}` : null,
       stackable: stackable ? 'Yes' : 'No',
       // §16: staff promotions are universally eligible — no targeting preview
       staffEligibility: type === 'STAFF' ? 'All Active Staff' : null,
@@ -434,7 +434,7 @@ export default function DiscountFormModal({ discount, currency = '₹', onClose,
                 {errors.discountValue && <p className="text-[10px] text-red-500">{errors.discountValue}</p>}
               </Field>
               {isPercentType && (
-                <Field label="Maximum Discount (optional)" hint="Caps the discount amount, e.g. 20% max ₹500">
+                <Field label="Maximum Discount (optional)" hint="Caps the discount amount, e.g. 20% max 500">
                   <div className="relative">
                     <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold">{currency}</span>
                     <input

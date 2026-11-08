@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Check, CheckCircle2, CreditCard, Loader2, AlertTriangle, Users, LayoutGrid, UtensilsCrossed, ReceiptText } from 'lucide-react';
+import { Check, CheckCircle2, CreditCard, Loader2, AlertTriangle, Users, LayoutGrid, Package, ReceiptText } from 'lucide-react';
 import { onboardingApi } from '../../../api/onboarding.api';
 import { FEATURE_LABELS } from '../../../utils/permissions';
 import { filterPlansForBusinessType, modeLabel } from '../../../utils/businessTypes';
@@ -142,7 +142,7 @@ export default function PlanStep({ onBack, onDone, onExitToLogin }) {
                     {(plan.businessMode || 'RESTAURANT') === 'RESTAURANT' && (
                       <Limit icon={LayoutGrid} label="Tables" value={plan.limits.maxTables} />
                     )}
-                    <Limit icon={UtensilsCrossed} label="Menu items" value={plan.limits.maxMenuItems} />
+                    <Limit icon={Package} label="Menu items" value={plan.limits.maxMenuItems} />
                     <Limit icon={ReceiptText} label="Orders/mo" value={plan.limits.maxOrdersPerMonth} />
                   </div>
                 )}

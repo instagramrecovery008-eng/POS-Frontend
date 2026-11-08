@@ -32,7 +32,7 @@ const POLICY_CONTENT = {
     title: 'Accuracy Confirmation',
     body: `Confirmation of accuracy.
 
-By accepting, you confirm that the business information you have submitted — including your business name, contact details, registration/GST information, and uploaded documents — is accurate and belongs to your business.
+By accepting, you confirm that the business information you have submitted — including your business name, contact details, registration and tax information, and uploaded documents — is accurate and belongs to your business.
 
 Uploaded documents may be reviewed by the platform team to verify your business before activation. If any information or document is found to be inaccurate or fraudulent, the platform may reject the application or suspend the account.`,
   },

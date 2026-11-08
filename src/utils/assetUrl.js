@@ -30,4 +30,24 @@ export function resolveAssetUrl(path) {
   return value;
 }
 
+/**
+ * Smaller, faster version of a product image.
+ *
+ * Cloudinary-hosted images (the app's image storage) are served through its
+ * on-the-fly transformation: automatic format (WebP/AVIF where supported),
+ * automatic quality, and a width cap — typically a fraction of the original
+ * bytes, and cached by the CDN. Any other URL (local /uploads, data:, blob:)
+ * is returned unchanged.
+ */
+export function optimizedImageUrl(url, width = 400) {
+  const resolved = resolveAssetUrl(url);
+  const m = /^(https:\/\/res\.cloudinary\.com\/[^/]+\/image\/upload\/)(.+)$/.exec(resolved);
+  if (!m) return resolved;
+  const rest = m[2];
+  // Already carries a transformation segment (e.g. "w_300,c_fill/…")? Leave it alone.
+  // A version segment ("v1794150831/…") is not a transformation.
+  if (/^[a-z]{1,3}_[^/]+\//.test(rest)) return resolved;
+  return `${m[1]}f_auto,q_auto,w_${Math.round(width)},c_limit/${rest}`;
+}
+
 export default resolveAssetUrl;

@@ -27,12 +27,13 @@ const CATEGORY_COLORS = [
   '#14B8A6', '#E11D48', '#A855F7', '#0EA5E9', '#D946EF'
 ];
 
-const CATEGORY_ICONS = ['utensils', 'pizza', 'hamburger', 'coffee', 'wine', 'cake', 'ice-cream', 'salad', 'fish', 'drumstick', 'bread', 'cheese', 'apple', 'cup', 'beer'];
+const CATEGORY_ICONS = ['utensils', 'pizza', 'hamburger', 'coffee', 'wine', 'cake', 'ice-cream', 'salad', 'fish', 'drumstick', 'bread', 'cheese', 'apple', 'cup', 'beer', 'paint', 'tiles', 'flask', 'brush', 'shield', 'link', 'tools', 'box'];
 
 const ICON_MAP = {
   utensils: '🍽️', pizza: '🍕', hamburger: '🍔', coffee: '☕',
   wine: '🍷', cake: '🎂', 'ice-cream': '🍦', salad: '🥗',
   fish: '🐟', drumstick: '🍗', bread: '🍞', cheese: '🧀',
+  paint: '🎨', tiles: '🧱', flask: '🧪', brush: '🖌️', shield: '🛡️', link: '🔗', tools: '🛠️', box: '📦',
   apple: '🍎', cup: '🥤', beer: '🍺'
 };
 
@@ -58,7 +59,7 @@ if (!invalidationRegistered) {
 
 export default function MenuPage() {
   const { settings } = useSettingsStore();
-  const currency = settings?.currencySymbol || '₹';
+  const currency = settings?.currencySymbol || '';
   const { addToast } = useUiStore();
   
   // Menu items state
@@ -99,7 +100,7 @@ export default function MenuPage() {
   // Numeric fields are strings: the DOM text is the source of truth while
   // typing (clearing stays empty, "3" never becomes "03"); conversion happens
   // once, at submit.
-  const [catForm, setCatForm] = useState({ name: '', sortOrder: '0', image: '', color: '#16A34A', icon: 'utensils', isActive: true });
+  const [catForm, setCatForm] = useState({ name: '', sortOrder: '0', image: '', color: '#16A34A', icon: 'box', isActive: true });
   const [catSubmitting, setCatSubmitting] = useState(false);
 
   // ── Update Category flow state ──
@@ -256,7 +257,7 @@ export default function MenuPage() {
         sortOrder: c.sortOrder || 0,
         image: c.image || '',
         color: c.color || '#16A34A',
-        icon: c.icon || 'utensils',
+        icon: c.icon || 'box',
         isActive: c.isActive !== false,
       }));
       const sorted = mapped.sort((a, b) => a.sortOrder - b.sortOrder);
@@ -385,7 +386,7 @@ export default function MenuPage() {
 
   // ── Category CRUD Handlers ───────────────────────────────────
   const resetCatForm = () => {
-    setCatForm({ name: '', sortOrder: String(categories.length + 1), image: '', color: '#16A34A', icon: 'utensils', isActive: true });
+    setCatForm({ name: '', sortOrder: String(categories.length + 1), image: '', color: '#16A34A', icon: 'box', isActive: true });
     setEditingCat(null);
   };
 
@@ -411,7 +412,7 @@ export default function MenuPage() {
       sortOrder: String(cat.sortOrder ?? 0),
       image: cat.image || '',
       color: cat.color || '#16A34A',
-      icon: cat.icon || 'utensils',
+      icon: cat.icon || 'box',
       isActive: cat.isActive !== false
     });
     setShowCatForm(true);
@@ -827,7 +828,7 @@ export default function MenuPage() {
       {/* LEVEL 1 — Category tabs: horizontal scroll row, never wrapped (Part 1 req. 2/13) */}
       <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-[10px] font-bold overflow-x-auto no-scrollbar">
         <button onClick={() => { setSelectedCategory('All'); setSelectedSubcategory(SUBCATEGORY_ALL); }}
-          className={`shrink-0 px-3 py-1.5 rounded-lg transition-all whitespace-nowrap cursor-pointer ${selectedCategory === 'All' ? 'bg-[#16A34A] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}>🍽️ All ({menuItems.length})</button>
+          className={`shrink-0 px-3 py-1.5 rounded-lg transition-all whitespace-nowrap cursor-pointer ${selectedCategory === 'All' ? 'bg-[#16A34A] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}>📦 All ({menuItems.length})</button>
         {categories.filter(c => c.isActive !== false).map(cat => (
           <button key={cat.id} onClick={() => { setSelectedCategory(cat.name); setSelectedSubcategory(SUBCATEGORY_ALL); }}
             style={{
@@ -840,7 +841,7 @@ export default function MenuPage() {
                 ? 'text-white shadow-xs border' 
                 : 'text-slate-600 hover:text-slate-900 border border-transparent'
             }`}>
-            {ICON_MAP[cat.icon || 'utensils'] || '🍽️'} {cat.name} ({menuItems.filter(m => m.category === cat.name).length})
+            {ICON_MAP[cat.icon || 'box'] || '📦'} {cat.name} ({menuItems.filter(m => m.category === cat.name).length})
           </button>
         ))}
       </div>
@@ -1177,7 +1178,7 @@ export default function MenuPage() {
                       <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: cat.color || '#16A34A' }} />
                     </span>
                     <span className="flex-1 text-xs font-bold text-slate-700">
-                      {ICON_MAP[cat.icon || 'utensils'] || '🍽️'} {cat.name}
+                      {ICON_MAP[cat.icon || 'box'] || '📦'} {cat.name}
                     </span>
                     <span className="text-[9px] font-bold text-slate-400">
                       {menuItems.filter(m => m.category === cat.name).length} items
@@ -1238,7 +1239,7 @@ export default function MenuPage() {
                       <button key={icon} type="button"
                         onClick={() => setCatForm({...catForm, icon})}
                         className={`w-7 h-7 rounded-lg border text-sm flex items-center justify-center transition-all cursor-pointer ${catForm.icon === icon ? 'border-slate-800 bg-slate-100 scale-110 shadow-sm' : 'border-slate-200 hover:bg-slate-50'}`}
-                        title={icon}>{ICON_MAP[icon] || '🍽️'}</button>
+                        title={icon}>{ICON_MAP[icon] || '📦'}</button>
                     ))}
                   </div>
                 </div>
@@ -1468,7 +1469,7 @@ export default function MenuPage() {
                 )}
               </div>
 
-              {/* Tax & GST */}
+              {/* Tax */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="text-[9px] font-bold uppercase text-slate-400">Tax %</label>

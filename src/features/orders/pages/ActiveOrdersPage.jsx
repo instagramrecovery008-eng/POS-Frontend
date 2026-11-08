@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useUiStore, useCartStore, useSettingsStore, useAuthStore } from '../../../store';
 import { 
   Clock, Users, Search, Ban, RefreshCw, Loader2, X, AlertTriangle, 
-  Plus, Printer, CreditCard, ArrowRight, UtensilsCrossed, 
+  Plus, Printer, CreditCard, ArrowRight, Table2, 
   CheckCircle2, ChefHat,
   Eye, Play, SplitSquareVertical, Building2, ReceiptText
 } from 'lucide-react';
@@ -109,7 +109,7 @@ export default function ActiveOrdersPage() {
   const { orders, setOrders } = useCartStore();
   const { settings } = useSettingsStore();
   const printerConfigured = useSettingsStore((s) => s.printerConfigured) !== false;
-  const currency = settings?.currencySymbol || '₹';
+  const currency = settings?.currencySymbol || '';
   const { user } = useAuthStore();
   const isServiceStaff = (user?.role || '').toUpperCase() === 'WAITER';
   // §5: a BASIC_POS food business runs counter-oriented cards — no table or
@@ -510,6 +510,8 @@ export default function ActiveOrdersPage() {
         fssaiNumber: settings?.fssaiNumber || '',
         logo: settings?.branding?.logo || '',
         receiptFooter: settings?.receiptFooterMessage || 'Thank you for your business!',
+        // Issued-in currency from the bill; the company's current currency only as a fallback
+        currency: billData?.currency || settings?.currency || '',
         billNo: billData?.billNo || String(billId),
         orderNo: order.orderNo || String(order.id),
         tableNo: order.table?.tableNo || '',
@@ -760,7 +762,7 @@ export default function ActiveOrdersPage() {
             prominent COUNTER ORDER label instead — never a table number. */}
         {order.table && (
           <div className="flex items-center gap-1.5 mb-2">
-            <UtensilsCrossed className="w-3.5 h-3.5 text-[#16A34A] shrink-0" />
+            <Table2 className="w-3.5 h-3.5 text-[#16A34A] shrink-0" />
             <span className="text-base font-black text-slate-800 uppercase tracking-wide truncate">
               Table {order.table.tableNo || order.table.name}
             </span>
@@ -784,7 +786,7 @@ export default function ActiveOrdersPage() {
         <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] mb-2.5">
           {!isCounterOrder && (
             <div className="flex items-center gap-1 text-slate-500">
-              <UtensilsCrossed className="w-3 h-3 text-slate-400" />
+              <Table2 className="w-3 h-3 text-slate-400" />
               <span className="font-semibold truncate">{tableName}</span>
             </div>
           )}
@@ -805,7 +807,7 @@ export default function ActiveOrdersPage() {
         {/* Total */}
         <div className="flex justify-between items-center border-t border-dashed border-slate-200 pt-2 mt-0.5 mb-2">
           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total</span>
-          <span className="font-mono text-sm font-black text-[#16A34A]">{currency}{Number(total).toLocaleString('en-IN')}</span>
+          <span className="font-mono text-sm font-black text-[#16A34A]">{currency}{Number(total).toLocaleString('en-US')}</span>
         </div>
 
         {/* REAL KOT status — driven by the ticket the backend created, never by
@@ -900,7 +902,7 @@ export default function ActiveOrdersPage() {
           <span className="font-semibold text-right">{customerName}</span>
         </div>
         <div className="flex justify-between items-center border-t border-dashed border-slate-200 pt-2">
-          <span className="text-[9px] font-bold text-slate-400">{itemsCount} items</span>              <span className="font-mono font-black text-slate-700">{currency}{Number(total).toLocaleString('en-IN')}</span>
+          <span className="text-[9px] font-bold text-slate-400">{itemsCount} items</span>              <span className="font-mono font-black text-slate-700">{currency}{Number(total).toLocaleString('en-US')}</span>
         </div>
         {settings.enableBilling !== false && canBill && (
           <button onClick={() => handleReprintBill(order)}
@@ -956,7 +958,7 @@ export default function ActiveOrdersPage() {
             <span className="font-bold text-red-600 text-right max-w-[60%] truncate">{cancelReason}</span>
           </div>
           <div className="flex justify-between text-[10px]">
-            <span className="font-semibold text-slate-500">Total:</span>              <span className="font-mono font-black text-slate-500 line-through">{currency}{Number(total).toLocaleString('en-IN')}</span>
+            <span className="font-semibold text-slate-500">Total:</span>              <span className="font-mono font-black text-slate-500 line-through">{currency}{Number(total).toLocaleString('en-US')}</span>
           </div>
         </div>
 
@@ -968,7 +970,7 @@ Table: ${order.table?.tableNo || 'Takeaway'}
 Customer: ${customerName}
 Cancelled: ${cancelledTime}
 By: ${cancelledBy}
-Reason: ${cancelReason}             Total: ₹${Number(total).toLocaleString('en-IN')}
+Reason: ${cancelReason}             Total: ${currency}${Number(total).toLocaleString('en-US')}
 Items: ${itemsCount}`, 'info');
           }}
             className="w-full h-10 bg-white border border-slate-200 hover:bg-red-50 text-slate-500 font-bold rounded-lg text-[9px] uppercase tracking-wider flex items-center justify-center gap-1 transition-colors cursor-pointer">
@@ -1269,10 +1271,10 @@ Items: ${itemsCount}`, 'info');
                         </div>
                         <div className="text-right shrink-0">
                           <p className={`text-xs font-bold ${fullyVoided ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
-                            {fullyVoided ? `${item.quantity}` : `${active}`} × ₹{Number(item.price).toFixed(2)}
+                            {fullyVoided ? `${item.quantity}` : `${active}`} × {currency}{Number(item.price).toFixed(2)}
                             {partial && <span className="text-[10px] text-slate-400"> (of {item.quantity})</span>}
                           </p>
-                          <p className="text-[10px] text-slate-500">₹{Number(item.total).toFixed(2)}</p>
+                          <p className="text-[10px] text-slate-500">{currency}{Number(item.total).toFixed(2)}</p>
                         </div>
                       </div>
                     );
@@ -1291,29 +1293,29 @@ Items: ${itemsCount}`, 'info');
             <div className="px-4 py-3 border-t border-slate-100 space-y-1.5">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-semibold text-slate-500">Subtotal</span>
-                <span className="text-[11px] font-bold text-slate-700">₹{previewTotals.subtotal.toFixed(2)}</span>
+                <span className="text-[11px] font-bold text-slate-700">{currency}{previewTotals.subtotal.toFixed(2)}</span>
               </div>
               {previewTotals.discount > 0 && (
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-semibold text-slate-500">Discount</span>
-                  <span className="text-[11px] font-bold text-emerald-600">−₹{previewTotals.discount.toFixed(2)}</span>
+                  <span className="text-[11px] font-bold text-emerald-600">−{currency}{previewTotals.discount.toFixed(2)}</span>
                 </div>
               )}
               {previewTotals.serviceCharge > 0 && (
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-semibold text-slate-500">Service Charge</span>
-                  <span className="text-[11px] font-bold text-slate-700">₹{previewTotals.serviceCharge.toFixed(2)}</span>
+                  <span className="text-[11px] font-bold text-slate-700">{currency}{previewTotals.serviceCharge.toFixed(2)}</span>
                 </div>
               )}
               {previewTotals.tax > 0 && (
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-semibold text-slate-500">Tax</span>
-                  <span className="text-[11px] font-bold text-slate-700">₹{previewTotals.tax.toFixed(2)}</span>
+                  <span className="text-[11px] font-bold text-slate-700">{currency}{previewTotals.tax.toFixed(2)}</span>
                 </div>
               )}
               <div className="flex items-center justify-between pt-1 border-t border-slate-100">
                 <span className="text-xs font-extrabold text-slate-800">Grand Total</span>
-                <span className="text-sm font-extrabold text-slate-800">₹{previewTotals.grandTotal.toFixed(2)}</span>
+                <span className="text-sm font-extrabold text-slate-800">{currency}{previewTotals.grandTotal.toFixed(2)}</span>
               </div>
             </div>
 

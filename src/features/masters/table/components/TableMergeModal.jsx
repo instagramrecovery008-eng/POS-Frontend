@@ -25,7 +25,7 @@ import { useUiStore, useSettingsStore } from '../../../../store';
 export default function TableMergeModal({ mode, onClose, onSplitRequested, onChanged }) {
   const { addToast } = useUiStore();
   const { settings } = useSettingsStore();
-  const currency = settings?.currencySymbol || '₹';
+  const currency = settings?.currencySymbol || '';
 
   const open = mode === 'merge' || mode === 'split';
 
