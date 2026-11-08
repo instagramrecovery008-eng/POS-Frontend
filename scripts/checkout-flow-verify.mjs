@@ -123,7 +123,7 @@ await evaluate(`(() => {
 })()`);
 await sleep(2500);
 
-const onMenu = await evaluate(`!!document.querySelector('input[placeholder="Search dishes, categories..."]')`);
+const onMenu = await evaluate(`!!document.querySelector('input[aria-label="Search the whole menu"]')`);
 check(onMenu, 'order entry opened directly on the menu');
 
 const before = (await api('GET', '/orders/active', undefined, token))?.data?.length ?? null;

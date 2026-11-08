@@ -1,5 +1,6 @@
 import axios from 'axios';
 import API_BASE_URL from '../config/apiConfig';
+import { getCurrentTenantSlug } from '../config/tenantConfig';
 
 // ─── Request Deduplication ──────────────────────────────────────────────────
 // Prevents concurrent duplicate GET requests to the same endpoint.
@@ -16,7 +17,8 @@ function getRequestKey(config) {
   // could be handed to restaurant B's identical request after a logout/login
   // switch on the same browser.
   const token = config.headers?.Authorization || '';
-  return `${config.method}:${config.url}:${JSON.stringify(config.data || '')}:${params}:${token}`;
+  const tenant = config.headers?.['X-Tenant-Slug'] || '';
+  return `${config.method}:${config.url}:${JSON.stringify(config.data || '')}:${params}:${token}:${tenant}`;
 }
 
 const apiClient = axios.create({
@@ -38,6 +40,14 @@ apiClient.interceptors.request.use(
       || null;
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
+    }
+
+    // Workspace (tenant) hint. The backend resolves it against the verified
+    // restaurant registry and then enforces that the authenticated user belongs
+    // to that restaurant — this header never grants access on its own.
+    const tenantSlug = getCurrentTenantSlug();
+    if (tenantSlug) {
+      config.headers['X-Tenant-Slug'] = tenantSlug;
     }
 
     // Multipart uploads (FormData) must NOT keep the default application/json

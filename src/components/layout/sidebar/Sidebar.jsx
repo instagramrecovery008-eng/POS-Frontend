@@ -16,6 +16,7 @@ import {
   X,
 } from 'lucide-react';
 import AppLogo from '../../common/AppLogo';
+import BrandLogo from '../../common/BrandLogo';
 import { cn } from '../../../lib/utils';
 import { useAuthStore, useUiStore, useSettingsStore, useCartStore } from '../../../store';
 import { canAccessScreen, SCREEN_FEATURES, hasFeature, isScreenAllowedForBusinessMode, screenPermissionKey, hasStaffPermission } from '../../../utils/permissions';
@@ -196,6 +197,17 @@ export default function Sidebar() {
 
   const renderBottomActions = () => (
     <>
+      {/* Compact platform identity — one shared QWIKOUT asset, contained on a
+          neutral plate so it stays readable on the dark rail. */}
+      <div className="px-1 pb-2">
+        <BrandLogo
+          surface="dark"
+          className={cn(
+            'h-8',
+            mobileNavOpen ? 'w-[112px]' : sidebarCollapsed ? 'w-8' : 'w-8 xl:w-[112px]'
+          )}
+        />
+      </div>
       <button
         onClick={handleLogout}
         title="Log Out"

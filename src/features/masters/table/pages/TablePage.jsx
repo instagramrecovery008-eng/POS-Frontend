@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Layers, Plus, Edit, Trash, Users, X, ArrowRight, Check, Move, Merge, GripVertical, Split, Loader2 } from 'lucide-react';
+
+import { sanitizeNumeric, toNumber } from '../../../../utils/numericHelpers';
 import { useAuthStore, useCartStore, useUiStore, useSettingsStore } from '../../../../store';
 import ConfirmationDialog from '../../../../components/ConfirmationDialog';
 import { tableApi } from '../../../../api/table.api';
@@ -83,9 +85,12 @@ export default function TablesPage() {
   const [selectedOccupiedTable, setSelectedOccupiedTable] = useState(null);
 
   // Table form
-  const [tableNum, setTableNum] = useState(1);
+  // Numeric fields are kept as STRINGS so the input text always matches what
+  // the user typed: a cleared field stays empty, and typing "3" shows "3"
+  // (never a padded "03"). Conversion + validation happen on submit.
+  const [tableNum, setTableNum] = useState('1');
   const [tableName, setTableName] = useState('');
-  const [tableSeats, setTableSeats] = useState(4);
+  const [tableSeats, setTableSeats] = useState('4');
   const [tableShape, setTableShape] = useState('Rectangle');
   const [tableFloorId, setTableFloorId] = useState('');
   const [editingTableId, setEditingTableId] = useState(null);
@@ -98,7 +103,8 @@ export default function TablesPage() {
   const [floorColor, setFloorColor] = useState('#16A34A');
   const [floorType, setFloorType] = useState('NON_AC');
   const [editingFloorId, setEditingFloorId] = useState(null);
-  const [floorSortOrder, setFloorSortOrder] = useState(0);
+  const [floorSortOrder, setFloorSortOrder] = useState('0');
+  const [fieldErrors, setFieldErrors] = useState({});
   const [floorSaving, setFloorSaving] = useState(false);
   const [tableSaving, setTableSaving] = useState(false);
 
@@ -287,19 +293,34 @@ export default function TablesPage() {
   // Table CRUD
   const handleSaveTable = async (e) => {
     e.preventDefault();
+
+    // ── Submit-boundary validation (the only place strings become numbers) ──
+    const errs = {};
+    const rawTableNo = String(tableNum).trim();
+    const rawSeats = String(tableSeats).trim();
+    if (!rawTableNo) errs.tableNo = 'Table number is required.';
+    else if (!/^\d+$/.test(rawTableNo)) errs.tableNo = 'Table number must be a whole number (0 or more).';
+    if (!rawSeats) errs.capacity = 'Capacity is required.';
+    else if (!/^\d+$/.test(rawSeats)) errs.capacity = 'Capacity must be a whole number (1 or more).';
+    else if (Number(rawSeats) < 1) errs.capacity = 'Capacity must be at least 1.';
+    setFieldErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+
     if (!tableName || !tableFloorId) {
       addToast('Please select a floor for the table.', 'warning');
       return;
     }
     if (tableSaving) return; // guard against duplicate submits
     setTableSaving(true);
+    const tableNoValue = String(Number(rawTableNo));
+    const capacityValue = Number(rawSeats);
     try {
       if (editingTableId) {
         const backendId = parseInt(editingTableId.replace('t-', ''));
         await tableApi.update(backendId, {
-          tableNo: String(tableNum),
+          tableNo: tableNoValue,
           name: tableName,
-          capacity: tableSeats,
+          capacity: capacityValue,
           shape: tableShape,
           floorId: tableFloorId ? Number(tableFloorId) : null,
         });
@@ -307,7 +328,7 @@ export default function TablesPage() {
         const updatedFloorType = floors.find(f => String(f.id) === String(tableFloorId))?.floorType || 'NON_AC';
         setTables(prev => prev.map(t =>
           t.id === editingTableId
-            ? { ...t, number: tableNum, name: tableName, seats: tableSeats, shape: tableShape, floorType: updatedFloorType, floorId: tableFloorId }
+            ? { ...t, number: Number(tableNoValue), tableNo: tableNoValue, name: tableName, seats: capacityValue, shape: tableShape, floorType: updatedFloorType, floorId: tableFloorId }
             : t
         ));
         setEditingTableId(null);
@@ -315,9 +336,9 @@ export default function TablesPage() {
         invalidateFloorsTablesCache();
       } else {
         const resp = await tableApi.create({
-          tableNo: String(tableNum),
+          tableNo: tableNoValue,
           name: tableName,
-          capacity: tableSeats,
+          capacity: capacityValue,
           shape: tableShape,
           floorId: tableFloorId ? Number(tableFloorId) : null,
         });
@@ -325,9 +346,10 @@ export default function TablesPage() {
           addToast('Table created successfully.', 'success');
           const newTable = {
             id: `t-${resp.table.id}`,
-            number: tableNum,
+            number: Number(tableNoValue),
+            tableNo: tableNoValue,
             name: tableName,
-            seats: tableSeats,
+            seats: capacityValue,
             shape: tableShape,
             floorType: floors.find(f => String(f.id) === String(tableFloorId))?.floorType || 'NON_AC',
             floorId: tableFloorId,
@@ -339,9 +361,10 @@ export default function TablesPage() {
       }
       invalidateFloorsTablesCache();
       setTableName('');
-      setTableSeats(4);
+      setTableSeats('4');
       setTableShape('Rectangle');
       setTableFloorId('');
+      setFieldErrors({});
     } catch (e) {
       const msg = e.message || 'Failed to save table.';
       addToast(msg, 'error');
@@ -355,8 +378,9 @@ export default function TablesPage() {
   const handleEditTable = (tbl) => {
     setEditingTableId(tbl.id);
     setTableName(tbl.name);
-    setTableNum(tbl.number);
-    setTableSeats(tbl.seats);
+    // Preserve the persisted value exactly as stored (no re-formatting).
+    setTableNum(String(tbl.tableNo ?? tbl.number ?? ''));
+    setTableSeats(String(tbl.seats ?? ''));
     setTableShape(tbl.shape);
     setTableFloorId(tbl.floorId);
     setShowDesigner(true);
@@ -391,6 +415,17 @@ export default function TablesPage() {
       addToast('Floor name is required.', 'error');
       return;
     }
+
+    // ── Submit-boundary validation for the floor's display order ──
+    const rawSort = String(floorSortOrder).trim();
+    const sortErrs = {};
+    if (rawSort !== '' && !/^\d+$/.test(rawSort)) {
+      sortErrs.floorSortOrder = 'Display order must be a whole number (0 or more).';
+    }
+    setFieldErrors((prev) => ({ ...prev, ...sortErrs, ...(sortErrs.floorSortOrder ? {} : { floorSortOrder: undefined }) }));
+    if (sortErrs.floorSortOrder) return;
+    const sortOrderValue = rawSort === '' ? 0 : Number(rawSort);
+
     setFloorSaving(true);
     try {
       if (editingFloorId) {
@@ -399,13 +434,13 @@ export default function TablesPage() {
           floorCode: floorCode || null,
           description: floorDescription || null,
           isActive: floorIsActive,
-          sortOrder: floorSortOrder,
+          sortOrder: sortOrderValue,
           ...(acNonAcPricing ? { floorType } : {}),
         });
         // Tables inherit the floor type — reflect it locally for the tables on
         // this floor without waiting for a refetch.
         setFloors(prev => prev.map(f =>
-          f.id === editingFloorId ? { ...f, name: floorName, floorCode: floorCode || null, description: floorDescription || null, isActive: floorIsActive, sortOrder: floorSortOrder, ...(acNonAcPricing ? { floorType } : {}) } : f
+          f.id === editingFloorId ? { ...f, name: floorName, floorCode: floorCode || null, description: floorDescription || null, isActive: floorIsActive, sortOrder: sortOrderValue, ...(acNonAcPricing ? { floorType } : {}) } : f
         ));
         if (acNonAcPricing) {
           setTables(prev => prev.map(t => String(t.floorId) === String(editingFloorId) ? { ...t, floorType } : t));
@@ -418,7 +453,7 @@ export default function TablesPage() {
           floorCode: floorCode || null,
           description: floorDescription || null,
           isActive: floorIsActive,
-          sortOrder: floorSortOrder,
+          sortOrder: sortOrderValue,
           ...(acNonAcPricing ? { floorType } : {}),
         });
         if (resp.success && resp.floor) {
@@ -432,7 +467,8 @@ export default function TablesPage() {
       setFloorIsActive(true);
       setFloorColor('#16A34A');
       setFloorType('NON_AC');
-      setFloorSortOrder(0);
+      setFloorSortOrder('0');
+      setFieldErrors({});
       invalidateFloorsTablesCache();
     } catch (e) {
       const msg = e.message || 'Failed to save floor.';
@@ -705,16 +741,34 @@ export default function TablesPage() {
                     </div>
                     <div className="space-y-1">
                       <label className="text-[9px] font-bold uppercase text-slate-400">Table No</label>
-                      <input type="number" inputMode="numeric" value={tableNum} onChange={(e) => setTableNum(parseInt(e.target.value) || 0)}
-                        className="w-full h-8 px-2 bg-white border rounded text-xs outline-none" />
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min="0"
+                        step="1"
+                        value={tableNum}
+                        onChange={(e) => setTableNum(sanitizeNumeric(e.target.value))}
+                        aria-invalid={!!fieldErrors.tableNo}
+                        className={`w-full h-8 px-2 bg-white border rounded text-xs outline-none ${fieldErrors.tableNo ? 'border-red-300' : ''}`}
+                      />
+                      {fieldErrors.tableNo && <p className="text-[9px] font-semibold text-red-600">{fieldErrors.tableNo}</p>}
                     </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-1">
                       <label className="text-[9px] font-bold uppercase text-slate-400">Capacity</label>
-                      <input type="number" inputMode="numeric" value={tableSeats} onChange={(e) => setTableSeats(parseInt(e.target.value) || 2)}
-                        className="w-full h-8 px-2 bg-white border rounded text-xs outline-none" />
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min="1"
+                        step="1"
+                        value={tableSeats}
+                        onChange={(e) => setTableSeats(sanitizeNumeric(e.target.value))}
+                        aria-invalid={!!fieldErrors.capacity}
+                        className={`w-full h-8 px-2 bg-white border rounded text-xs outline-none ${fieldErrors.capacity ? 'border-red-300' : ''}`}
+                      />
+                      {fieldErrors.capacity && <p className="text-[9px] font-semibold text-red-600">{fieldErrors.capacity}</p>}
                     </div>
                     <div className="space-y-1">
                       <label className="text-[9px] font-bold uppercase text-slate-400">Shape</label>
@@ -833,8 +887,17 @@ export default function TablesPage() {
                   <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-1">
                       <label className="text-[9px] font-bold uppercase text-slate-400">Display Order</label>
-                      <input type="number" inputMode="numeric" value={floorSortOrder} onChange={(e) => setFloorSortOrder(parseInt(e.target.value) || 0)}
-                        className="w-full h-8 px-2 bg-white border rounded text-xs outline-none" min="0" />
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min="0"
+                        step="1"
+                        value={floorSortOrder}
+                        onChange={(e) => setFloorSortOrder(sanitizeNumeric(e.target.value))}
+                        aria-invalid={!!fieldErrors.floorSortOrder}
+                        className={`w-full h-8 px-2 bg-white border rounded text-xs outline-none ${fieldErrors.floorSortOrder ? 'border-red-300' : ''}`}
+                      />
+                      {fieldErrors.floorSortOrder && <p className="text-[9px] font-semibold text-red-600">{fieldErrors.floorSortOrder}</p>}
                     </div>
                     <div className="space-y-1 flex flex-col">
                       <label className="text-[9px] font-bold uppercase text-slate-400">Active</label>
@@ -847,7 +910,7 @@ export default function TablesPage() {
                   </div>
 
                   <div className="flex gap-2 pt-1">
-                    <button type="button" onClick={() => { setEditingFloorId(null); setFloorName(''); setFloorCode(''); setFloorDescription(''); setFloorIsActive(true); setFloorSortOrder(0); }} className="flex-1 h-8 border border-slate-200 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-50 cursor-pointer">Reset</button>
+                    <button type="button" onClick={() => { setEditingFloorId(null); setFloorName(''); setFloorCode(''); setFloorDescription(''); setFloorIsActive(true); setFloorSortOrder('0'); }} className="flex-1 h-8 border border-slate-200 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-50 cursor-pointer">Reset</button>
                     <button type="submit" disabled={floorSaving} className="flex-[2] h-8 bg-[#16A34A] text-white rounded-lg text-xs font-bold hover:bg-[#15803D] cursor-pointer disabled:opacity-50">
                       {floorSaving ? 'Saving...' : editingFloorId ? 'Update' : 'Add Floor'}
                     </button>
@@ -883,7 +946,7 @@ export default function TablesPage() {
                         </div>
                       </div>
                       <div className="flex gap-1 shrink-0">
-                        <button onClick={() => { setEditingFloorId(f.id); setFloorName(f.name); setFloorCode(f.floorCode || ''); setFloorDescription(f.description || ''); setFloorIsActive(f.isActive !== false); setFloorType(f.floorType || 'NON_AC'); setFloorSortOrder(f.sortOrder || 0); }}
+                        <button onClick={() => { setEditingFloorId(f.id); setFloorName(f.name); setFloorCode(f.floorCode || ''); setFloorDescription(f.description || ''); setFloorIsActive(f.isActive !== false); setFloorType(f.floorType || 'NON_AC'); setFloorSortOrder(String(f.sortOrder ?? 0)); }}
                           className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded cursor-pointer" title="Edit floor">
                           <Edit className="w-3.5 h-3.5" />
                         </button>

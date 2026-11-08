@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  X, ChevronRight, Check, ShoppingCart, Users,
+  X, ChevronLeft, ChevronRight, Check, ShoppingCart, Users,
   UtensilsCrossed, Search, Plus, Minus, Trash2,
   CreditCard, Smartphone, AlertTriangle, AlertCircle,
   Clock, Printer, FileText, Save, Play, Ban,
   ArrowRight, ArrowLeft, Building2, ChefHat,
   User, Loader2,
-  RotateCcw, UserPlus, LayoutGrid, Package
+  RotateCcw, UserPlus, LayoutGrid, Package,
+  Coffee, Pizza, Cake, Soup, Salad, Beef, Fish, Sandwich, Wine, Beer, Croissant
 } from 'lucide-react';
 import { useUiStore, useCartStore, useSettingsStore, useAuthStore } from '../../../../store';
 import { getBusinessCapabilities, resolveMenuItemUnitPrice, isAcNonAcPricingEnabled } from '../../../../utils/businessCapabilities';
@@ -17,9 +18,11 @@ import { kotApi } from '../../../../api/kot.api';
 import { categoryApi } from '../../../../api/category.api';
 import { userApi } from '../../../../api/user.api';
 import { floorApi } from '../../../../api/floor.api';
-import { openKotPrintPreview } from '../../../../services/printService';
+import { dispatchKotPrint } from '../../../../services/kotPrintService';
+import { openKotPrintWindow, closeKotPrintWindow } from '../../../../services/printService';
 import { PLACEHOLDER_IMAGE } from '../../../../lib/imagePlaceholder';
 import { useBodyScrollLock } from '../../../../hooks/useBodyScrollLock';
+import useKeyboardWedgeScanner from '../../../../hooks/useKeyboardWedgeScanner';
 import {
   SUBCATEGORY_ALL,
   subcategoryTabsFor,
@@ -31,6 +34,51 @@ import {
 } from '../../../../utils/orderFlow';
 
 const STEP_LABELS = ['Order Type', 'Floor', 'Table', 'Menu', 'Review'];
+
+// ── Category navigation persistence ─────────────────────────────────────────
+// The selected menu category survives a page refresh (session storage is
+// per-tab and cleared on logout/tab close, so no cross-session leakage). The
+// value is only restored when the refreshed menu still contains that category.
+const CATEGORY_STORAGE_KEY = 'pos_menu_category';
+const readStoredCategory = () => {
+  try {
+    return window.sessionStorage.getItem(CATEGORY_STORAGE_KEY) || 'All';
+  } catch {
+    return 'All';
+  }
+};
+
+// Desktop PC breakpoint (Tailwind `lg`) — matches the CSS gate used by the
+// restaurant category rail, so the JS mounting decision and the CSS widths can
+// never disagree.
+const DESKTOP_RAIL_QUERY = '(min-width: 1024px)';
+const readDesktopRailViewport = () => {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+  return window.matchMedia(DESKTOP_RAIL_QUERY).matches;
+};
+
+// ── Category icons (restaurant PC sidebar) ─────────────────────────────────
+// Deterministic keyword → icon mapping using the app's EXISTING lucide set (no
+// new icon dependency). Unmatched names fall back to UtensilsCrossed, so every
+// category always has a recognizable, labelled control in the collapsed rail.
+const CATEGORY_ICON_RULES = [
+  [/pizza/i, Pizza],
+  [/coffee|tea|beverage|drink|juice|shake|smoothie|mocktail|cocktail|soda/i, Coffee],
+  [/dessert|sweet|cake|ice ?cream|pastry|bakery/i, Cake],
+  [/soup|starter|appetizer/i, Soup],
+  [/salad|healthy|vegan/i, Salad],
+  [/chicken|mutton|kebab|tandoori|beef|steak|grill/i, Beef],
+  [/fish|seafood|prawn/i, Fish],
+  [/burger|sandwich|wrap|roll|snack/i, Sandwich],
+  [/wine|alcohol|liquor/i, Wine],
+  [/beer/i, Beer],
+  [/bread|croissant/i, Croissant],
+];
+const categoryIconFor = (name) => {
+  const label = String(name || '');
+  const rule = CATEGORY_ICON_RULES.find(([pattern]) => pattern.test(label));
+  return rule ? rule[1] : UtensilsCrossed;
+};
 
 const ORDER_TYPE_OPTIONS = [
   {
@@ -84,36 +132,49 @@ function ConfirmDialog({ open, title, message, confirmLabel, confirmVariant, onC
 
 // ── Main Wizard Component ───────────────────────────────────────────────────
 export default function TakeOrderWizard({ mode = 'modal' } = {}) {
-  const { showTakeOrderWizard, setShowTakeOrderWizard, setScreen, addToast, activeOrderTakingId, setActiveOrderTakingId, currentScreen, incrementRefreshTrigger, pendingTable, clearPendingTable } = useUiStore();
+  const { showTakeOrderWizard, setShowTakeOrderWizard, setScreen, goBack: goBackScreen, addToast, activeOrderTakingId, setActiveOrderTakingId, currentScreen, incrementRefreshTrigger, pendingTable, clearPendingTable } = useUiStore();
   const { addOrder } = useCartStore();
   const { settings } = useSettingsStore();
-  // Dietary indicators only for food verticals (§10) — retail fallback shows a
-  // neutral product icon instead of food emoji. One capability check.
-  const isDietaryBusiness = (settings.capabilities || getBusinessCapabilities(settings.businessType)).dietary === true;
-  const currency = settings?.currencySymbol || '₹';
   const { user } = useAuthStore();
-  const isServiceStaff = (user?.role || '').toUpperCase() === 'WAITER';
-  // Order-type assignment from the Staff Roster (authStore, /users/me/permissions):
-  // staffAssignedOrderTypes === null → unrestricted (all order types allowed);
-  // otherwise the list is the allowed set, so a Takeaway-assigned staff member is
-  // dropped straight into Takeaway with no floor/table step (backend enforces too).
   const assignedOrderTypes = useAuthStore((s) => s.staffAssignedOrderTypes);
-  // Order-access model: Dine In is the default for ALL staff; the Takeaway
-  // grant (Staff Roster) ADDS takeaway. Exempt roles are unrestricted.
-  const isExemptRole = ['ADMIN', 'SUPER_ADMIN', 'MANAGER'].includes(String(user?.role || '').toUpperCase());
-  const takeawayGranted = isExemptRole || (Array.isArray(assignedOrderTypes) && assignedOrderTypes.includes('TAKEAWAY'));
-  // Grant state from /users/me/permissions has loaded for this staff member
-  // (exempt roles resolve immediately; staff resolve to [] or ['TAKEAWAY']).
-  const grantLoaded = !!user && (isExemptRole || Array.isArray(assignedOrderTypes));
-  // Barcode scanner entitlement (Part 11): active only when the plan includes
-  // the feature AND the restaurant toggle is ON. `barcodeScannerAvailable`
-  // starts false until the settings store resolves the subscription snapshot —
-  // the scanner UI simply stays hidden until entitlement is confirmed.
+  // Every store hook is called unconditionally, in a fixed order. An earlier
+  // version short-circuited the third selector inside `&&`, so when the scanner
+  // was unavailable the hook was skipped entirely — React then saw a different
+  // hook sequence on the next render ("change in the order of Hooks" /
+  // updateCallback crash). Read the flag, then combine the plain booleans.
   const barcodeAvailable = useSettingsStore((s) => s.barcodeScannerAvailable === true);
-  const canScanBarcode = barcodeAvailable && useSettingsStore((s) => s.settings?.barcodeScannerEnabled === true);
+  const barcodeSupported = useSettingsStore((s) => s.barcodeScannerSupported === true);
+  const barcodeEnabled = useSettingsStore((s) => s.settings?.barcodeScannerEnabled === true);
+  const canScanBarcode = barcodeAvailable && barcodeSupported && barcodeEnabled;
+  const printerConfigured = useSettingsStore((s) => s.printerConfigured) !== false;
 
-  // ── Step State ──
-  const [currentStep, setCurrentStep] = useState(0);
+  // ── All high-cost / derived values computed BEFORE any hook. ──
+  // Capabilities come from the server-resolved settings. When that payload has
+  // not arrived yet (or omits the map), fall back to the centralized
+  // business-type map so a KOT / dietary business never loses its workflow
+  // during load — the fallback is the same one the rest of the shell uses.
+  const wizardCaps = settings?.capabilities || getBusinessCapabilities(settings?.businessType);
+  const skipFloorMgmtResolved = settings?.enableFloorManagement === false || wizardCaps.tables === false;
+  const isExemptRole = ['ADMIN', 'SUPER_ADMIN', 'MANAGER'].includes(String(user?.role || '').toUpperCase());
+  const grantLoaded = !!user && (isExemptRole || Array.isArray(assignedOrderTypes));
+  const orderTypeResolution = resolveAvailableOrderTypes({
+    role: user?.role,
+    assignedOrderTypes,
+    grantLoaded,
+    floorManagementOff: skipFloorMgmtResolved,
+  });
+  const acNonAcPricing = isAcNonAcPricingEnabled(settings);
+  // PC category-sidebar treatment applies to RESTAURANT tenants ONLY. The
+  // business type is the server-resolved platform value in the settings payload
+  // (authoritative) — never inferred from category names or product data.
+  const isRestaurantTenant = String(settings?.businessType || '').trim().toUpperCase() === 'RESTAURANT';
+  const isDietaryBusiness = wizardCaps.dietary === true;
+  const kotCapable = wizardCaps.kot === true;
+  const currency = settings?.currencySymbol || '₹';
+  const isServiceStaff = String(user?.role || '').toUpperCase() === 'WAITER';
+  const takeawayGranted = isExemptRole || (Array.isArray(assignedOrderTypes) && assignedOrderTypes.includes('TAKEAWAY'));
+  const isPageMode = mode === 'page';
+
   const [submitting, setSubmitting] = useState(null); // null | 'kot' | 'order' | 'update'
   // Synchronous re-entrancy guard: React state alone is async — a rapid
   // double-tap on Print KOT / Place Order / Update would fire two
@@ -126,6 +187,22 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
 
   // ── Step 1: Order Type ──
   const [orderType, setOrderType] = useState(null);
+
+  // ── Wizard step ──
+  // Declared BEFORE advanceOnce and every effect that reads it: dependency
+  // arrays and callbacks are evaluated during render, so a later declaration
+  // is a temporal-dead-zone ReferenceError at runtime.
+  const [currentStep, setCurrentStep] = useState(0);
+
+  // ── Order-type derived values ──
+  // These MUST stay BELOW the orderType state they read. Moving them back up
+  // above the state hooks reintroduces the `Cannot access 'orderType' before
+  // initialization` crash the wizard had.
+  const isTakeaway = orderType === 'takeaway';
+  const needsTable = orderType === 'dine_in';
+  const skipFloorMgmt = skipFloorMgmtResolved;
+  const maxStep = isTakeaway ? 2 : (skipFloorMgmt ? 3 : 4);
+  const tableFlowReturnScreen = skipFloorMgmt ? 'dashboard' : 'tables';
 
   // ── Auto-advance guard (touch/UX) ──
   // A synchronous ref guard prevents duplicate navigation from rapid taps:
@@ -178,8 +255,33 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
   const [categories, setCategories] = useState([]);
   const [subcategories, setSubcategories] = useState([]); // loaded once with the menu (Part 2 req. 2)
   const [menuError, setMenuError] = useState(null); // menu request failed → error state + Retry (req 15)
-  const [selectedCat, setSelectedCat] = useState('All');
+  const [selectedCat, setSelectedCat] = useState(readStoredCategory);
+  // Captured once (before the wizard's own reset can change the selection) so
+  // the value can be re-applied after the menu has loaded.
+  const [restoredCategory] = useState(readStoredCategory);
   const [selectedSubcat, setSelectedSubcat] = useState(SUBCATEGORY_ALL); // 'All' | 'NONE' | subcategory id
+  // Restaurant PC category rail (lg+ only — tablet/mobile keep their existing
+  // layout). Collapsing is pure presentation: selected category, cart, step and
+  // order state are untouched.
+  const [categorySidebarCollapsed, setCategorySidebarCollapsed] = useState(false);
+  // Desktop viewport flag for the POS Ordering page. The restaurant category
+  // rail is MOUNTED at workspace level there (instead of inside the menu step)
+  // so it spans from the top of the ordering workspace down to the action bar.
+  // Reading it from one media query keeps ONE rail instance in the DOM — the
+  // same categories, refs and selection — never a duplicated rail.
+  const [desktopRailViewport, setDesktopRailViewport] = useState(readDesktopRailViewport);
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
+    const mql = window.matchMedia(DESKTOP_RAIL_QUERY);
+    const onChange = (event) => setDesktopRailViewport(event.matches);
+    setDesktopRailViewport(mql.matches);
+    if (mql.addEventListener) mql.addEventListener('change', onChange);
+    else mql.addListener(onChange); // Safari < 14
+    return () => {
+      if (mql.removeEventListener) mql.removeEventListener('change', onChange);
+      else mql.removeListener(onChange);
+    };
+  }, []);
   const [searchQuery, setSearchQuery] = useState('');
   const [cart, setCart] = useState([]);
   const [notesForItem, setNotesForItem] = useState(null);
@@ -213,14 +315,6 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
   // that depends on floor/table state mounts while orderType is still unknown.
   // §7: a non-table business (retail — capabilities.tables=false) also skips
   // floor management regardless of the tenant module toggle.
-  const wizardCaps = settings.capabilities || {};
-  const skipFloorMgmtResolved = settings.enableFloorManagement === false || wizardCaps.tables === false;
-  const orderTypeResolution = resolveAvailableOrderTypes({
-    role: user?.role,
-    assignedOrderTypes,
-    grantLoaded,
-    floorManagementOff: skipFloorMgmtResolved,
-  });
 
   // ── Clear floor/table when switching to Take Away ──
   useEffect(() => {
@@ -239,8 +333,6 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
 
   // ── Load Data ──
   const [dataLoading, setDataLoading] = useState(false);
-
-  const isPageMode = mode === 'page';
 
   // ── Page-mode table session ──
   // The POS Ordering screen (page mode) is entered from the Floors & Tables
@@ -359,6 +451,7 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
           if (!Number.isSafeInteger(backendOrderId) || backendOrderId <= 0) {
             addToast('Invalid order ID — cannot load order.', 'error');
             setActiveOrderTakingId(null);
+            if (isPageMode) goBackScreen('active_orders');
             return;
           }
           const resp = await orderApi.getById(backendOrderId);
@@ -370,6 +463,7 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
               addToast('This order has been cancelled and cannot be modified.', 'error');
               setShowTakeOrderWizard(false);
               setActiveOrderTakingId(null);
+              if (isPageMode) goBackScreen('active_orders');
               return;
             }
 
@@ -380,6 +474,25 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
             setOrderType(resolvedOrderType);
             // Set guest count
             if (orderData.guestCount) setGuestCount(orderData.guestCount);
+            // Keep the ORIGINAL order context visible: the table this order
+            // belongs to is restored from the order relation (never re-picked),
+            // so the header badge and the review/KOT payload identify the real
+            // table. Counter/takeaway orders have no table and stay table-less.
+            if (orderData.orderType === 'DINE_IN' && orderData.table) {
+              const t = orderData.table;
+              setSelectedTable({
+                id: `t-${t.id}`,
+                number: parseInt(t.tableNo) || t.id,
+                name: t.name || `Table ${String(t.tableNo ?? t.id).padStart(2, '0')}`,
+                seats: t.capacity || orderData.guestCount || 2,
+                floorType: t.floorType || t.tableType || 'NON_AC',
+                tableType: t.tableType || 'NON_AC',
+                status: 'Occupied',
+                floorId: t.floorId ? `floor-${t.floorId}` : null,
+              });
+            } else {
+              setSelectedTable(null);
+            }
             // Set customer info
             if (orderData.customer) {
               setCustomerName(orderData.customer.name || '');
@@ -587,6 +700,7 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
           settings
         ),
       });
+      addToast(`${item.name} added`, 'success');
     } catch (e) {
       const status = e?.response?.status;
       if (status === 404) {
@@ -601,6 +715,18 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
       requestAnimationFrame(() => scannerInputRef.current?.focus());
     }
   };
+
+  // ── Keyboard-wedge capture (Part 11) ──
+  // The wizard shows NO barcode field (the Basic POS workspace owns the
+  // dedicated scan screen when the tenant runs quick billing), but a scanner
+  // must still work here: HID scanners blast the code and press Enter. The
+  // shared hook ignores keystrokes aimed at ANY text field (search box,
+  // password, notes…) so typing is never hijacked, and only fires when the
+  // whole burst arrives scanner-fast.
+  useKeyboardWedgeScanner({
+    enabled: canScanBarcode,
+    onScan: handleBarcodeScan,
+  });
 
   const updateCartQty = useCallback((itemId, delta) => {
     setCart(prev => prev.map(c => c.itemId === itemId ? { ...c, qty: Math.max(0, c.qty + delta) } : c).filter(c => c.qty > 0));
@@ -621,8 +747,6 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
   // is chosen the base price is shown; the backend always re-resolves and
   // validates the real price (a frontend price can never override it).
   const effectiveUnitPrice = (item) => resolveMenuItemUnitPrice(item, selectedTable, settings);
-  const acNonAcPricing = isAcNonAcPricingEnabled(settings);
-
   // ── Computed Totals ──
   const subtotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
   const gstRate = settings?.gstPercentage || 5;
@@ -630,22 +754,6 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
   const serviceCharge = settings?.serviceCharge || 0;
   const serviceChargeAmount = serviceCharge > 0 ? Number(((subtotal) * serviceCharge / 100).toFixed(2)) : 0;
   const grandTotal = Number((subtotal + taxAmount + serviceChargeAmount).toFixed(2));
-
-  // ── Helpers ──
-  const isTakeaway = orderType === 'takeaway';
-  const needsTable = orderType === 'dine_in';
-  // §7: floor/table steps also skipped for non-table business types.
-  const skipFloorMgmt = settings.enableFloorManagement === false || (settings.capabilities || {}).tables === false;
-  // Where a finished/cancelled table session returns to: the Floors & Tables
-  // board the hand-off was made on. When the tenant has no floors/tables
-  // workflow that board is not part of this tenant's UI, so fall back to the
-  // dashboard instead of navigating to a blocked screen.
-  const tableFlowReturnScreen = skipFloorMgmt ? 'dashboard' : 'tables';
-  // When floor management is disabled, skip floor & table steps (Quick Order mode)
-  // For takeaway: 3 steps (Order Type → Menu → Review) → maxStep = 2
-  // For dine-in with floor mgmt: 5 steps → maxStep = 4
-  // For dine-in without floor mgmt: 4 steps (skip floor&table) → maxStep = 3
-  const maxStep = isTakeaway ? 2 : (skipFloorMgmt ? 3 : 4);
 
   const getBackendId = (prefixedId, prefix) => {
     const id = parseInt((prefixedId || '').replace(prefix, ''));
@@ -681,6 +789,11 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
     if (submittingRef.current) return; // double-tap guard
     submittingRef.current = true;
     setSubmitting('kot');
+    // Open the print window INSIDE the click gesture. The KOT number only
+    // exists after the order API responds, and window.open() after an await is
+    // treated as automated and blocked — which is why kitchen tickets stopped
+    // printing. The ticket is rendered into this window once the KOT exists.
+    const kotPrintWindow = openKotPrintWindow();
     try {
       const payload = buildOrderPayload();
       const resp = await orderApi.create(payload);
@@ -698,37 +811,56 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
       }
 
       // KOT is auto-created by backend during order creation.
-      // The response includes order.kot[] with the auto-KOT.
-      // NEVER create a second KOT — the backend will reject it as "no new items".
+      // The response includes order.kot[] with the auto-KOT (plus its
+      // print-job state). NEVER create a second KOT — the backend will reject
+      // it as "no new items".
       const autoKot = orderData.kot?.[0] || null;
       const kotNo = autoKot?.kotNo || null;
 
-      // Open KOT print preview using shared service
-      // For new orders, print from cart items (the auto-KOT contains ALL items)
-      // openKotPrintPreview returns false when the browser blocked the popup —
-      // the caller must know whether printing actually started.
-      let printInitiated = false;
+      // ── Dispatch the KOT print job (mandatory kitchen printing) ──
+      // The shared dispatch service opens the existing print preview AND
+      // reports DISPATCHED/FAILED back to the API, so the job survives a
+      // refresh and can be retried from Active Orders / Kitchen Tickets. A
+      // missing printer is a visible warning with a route to printer settings
+      // — never a fake "printed" confirmation.
+      let printResult = { dispatched: false };
       try {
-        printInitiated = openKotPrintPreview({
-          restaurantName: settings?.branding?.restaurantName || '',
-          kotNo: kotNo || 'N/A',
-          orderNo: orderData.orderNo || String(orderData.id),
-          tableNo: selectedTable?.name || '',
-          orderType: orderType === 'dine_in' ? 'DINE_IN' : 'TAKEAWAY',
-          waiterName: waiterName || '',
-          customerName: customerName || '',
-          customerPhone: customerPhone || '',
-          guestCount: guestCount || 1,
-          notes: '',
-          items: cart.map(c => ({ name: c.name, quantity: c.qty, notes: c.notes })),
-          footer: settings?.receiptFooterMessage || 'Thank You!',
-          date: new Date()
+        printResult = await dispatchKotPrint({
+          kot: autoKot,
+          printerConfigured,
+          printWindow: kotPrintWindow,
+          printData: {
+            restaurantName: settings?.branding?.restaurantName || '',
+            kotNo: kotNo || 'N/A',
+            orderNo: orderData.orderNo || String(orderData.id),
+            tableNo: selectedTable?.name || '',
+            orderType: orderType === 'dine_in' ? 'DINE_IN' : 'TAKEAWAY',
+            waiterName: waiterName || '',
+            customerName: customerName || '',
+            customerPhone: customerPhone || '',
+            guestCount: guestCount || 1,
+            notes: '',
+            items: cart.map(c => ({ name: c.name, quantity: c.qty, notes: c.notes })),
+            footer: settings?.receiptFooterMessage || 'Thank You!',
+            date: new Date()
+          }
         });
       } catch (printErr) {
-        // KOT print preview failed — non-critical
+        // KOT print preview failed — non-critical, the ticket still exists
         addToast('KOT created but print preview failed. You can reprint from Active Orders.', 'warning');
       }
 
+      if (printResult.dispatched && printResult.needsConfiguration) {
+        // Printed through the system printer, but this tenant has no kitchen
+        // printer configured — an actionable warning, not a silent failure.
+        addToast(`KOT ${kotNo || ''} sent to the system printer. ${printResult.warning || ''}`.trim(), 'warning');
+      } else if (!printResult.dispatched) {
+        addToast(`KOT created but NOT printed: ${printResult.error || 'print unavailable'}`, 'error');
+      }
+      // Nothing was rendered into the pre-opened window → close the blank tab.
+      if (!printResult.dispatched) closeKotPrintWindow(kotPrintWindow);
+
+      const printInitiated = printResult.dispatched === true;
       // Add to local store
       addOrder({
         id: `ord-${orderData.id}`,
@@ -771,6 +903,9 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
       clearPendingTable();
       await loadInitialData();
     } catch (e) {
+      // The order was never created — close the pre-opened window so the user
+      // is not left with a blank popup.
+      closeKotPrintWindow(kotPrintWindow);
       const msg = e?.response?.data?.message || e?.message || 'Failed to create order';
       addToast(msg, 'error');
     } finally {
@@ -779,14 +914,14 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
     }
   };
 
-  // ── Action: Place Order (kitchen module OFF) ───────────────────────────────
-  // With "Enable Kitchen (KOT)" OFF there is no KOT workflow, so an order is
-  // created without a kitchen ticket (the documented OFF flow is
-  // Order → Direct Billing → Payment → Complete). Payment is NEVER opened from
-  // here — the cashier collects it from Active Orders / Billing, the single
-  // payment surface. The action is rendered ONLY while the kitchen module is
-  // disabled; when it is enabled Print KOT is the one action that creates the
-  // order (so there is never a second create button that could double-order).
+  // ── Action: Place Order (business type WITHOUT a kitchen) ──────────────────
+  // A retail/quick-billing vertical has no kitchen capability, so an order is
+  // created without a kitchen ticket (Order → Direct Billing → Payment →
+  // Complete). Payment is NEVER opened from here — the cashier collects it from
+  // Active Orders / Billing, the single payment surface. This action is rendered
+  // ONLY for non-KOT businesses: for a FOOD business Print KOT is the one
+  // action that creates the order (so there is never a second create button
+  // that could double-order), even when the Kitchen screen toggle is OFF.
   const handlePlaceOrder = async () => {
     if (cart.length === 0) return;
     if (needsTable && !selectedTable) {
@@ -872,6 +1007,9 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
     if (submittingRef.current) return; // double-tap guard
     submittingRef.current = true;
     setSubmitting('update');
+    // Same gesture rule as Print KOT: the delta KOT number only exists after
+    // the add-item/KOT requests, so the window is opened now and filled later.
+    const kotPrintWindow = openKotPrintWindow();
     try {
       const backendId = parseInt(activeOrderTakingId.replace('ord-', ''));
       if (isNaN(backendId)) throw new Error('Invalid order ID');
@@ -904,47 +1042,68 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
       // Generate new KOT with only the newly added items.
       // Backend calculates delta from KOTItem history, so only unsent items are included.
       try {
-        if (cart.length > 0 && settings.enableKitchen !== false) {
+        if (cart.length > 0 && kotCapable) {
           const kotResp = await kotApi.create({ orderId: backendId });
           // Backend returns { success: true, data: { created, kot, kotItems } }
           const kotData = kotResp?.data || kotResp;
           // If no new items, backend returns created=false — this is normal, not an error
           if (kotData?.created === false || !kotData?.kotNo) {
+            closeKotPrintWindow(kotPrintWindow);
             addToast('No new items to send to kitchen.', 'info');
           } else {
             const kotNo = kotData?.kotNo || null;
-            // Print KOT using KOTItems from response (only delta items)
+            // Incremental (delta) KOT print — the dispatch service opens the
+            // shared preview AND records the print job, so an added-items
+            // ticket is retriable exactly like a first one.
             try {
-              openKotPrintPreview({
-                restaurantName: settings?.branding?.restaurantName || '',
-                kotNo: kotNo || 'N/A',
-                // The ticket must identify the REAL order — order number, the
-                // table it belongs to, order type, staff and kitchen notes.
-                // Items come from the KOTItems returned by the backend, which
-                // contain ONLY the newly added (previously unsent) quantities.
-                orderNo: editingOrder?.orderNo || String(backendId),
-                tableNo: editingOrder?.table?.tableNo || editingOrder?.table?.name || '',
-                orderType: editingOrder?.orderType || 'DINE_IN',
-                waiterName: editingOrder?.user?.name || user?.name || '',
-                customerName: editingOrder?.customer?.name || customerName || '',
-                customerPhone: editingOrder?.customer?.phone || customerPhone || '',
-                guestCount: editingOrder?.guestCount || 1,
-                notes: editingOrder?.notes || '',
-                items: (kotData?.kotItems || []).map(ki => ({
-                  name: ki.menuItem?.name || 'Item',
-                  quantity: ki.quantity || 1,
-                  notes: ki.notes || '',
-                  dietaryType: ki.menuItem?.dietaryType || null
-                })),
-                footer: settings?.receiptFooterMessage || 'Thank You!',
-                date: new Date()
+              const incResult = await dispatchKotPrint({
+                kot: kotData.kot || kotData,
+                printerConfigured,
+                printWindow: kotPrintWindow,
+                manual: true,
+                printData: {
+                  restaurantName: settings?.branding?.restaurantName || '',
+                  kotNo: kotNo || 'N/A',
+                  // The ticket must identify the REAL order — order number, the
+                  // table it belongs to, order type, staff and kitchen notes.
+                  // Items come from the KOTItems returned by the backend, which
+                  // contain ONLY the newly added (previously unsent) quantities.
+                  orderNo: editingOrder?.orderNo || String(backendId),
+                  tableNo: editingOrder?.table?.tableNo || editingOrder?.table?.name || '',
+                  orderType: editingOrder?.orderType || 'DINE_IN',
+                  waiterName: editingOrder?.user?.name || user?.name || '',
+                  customerName: editingOrder?.customer?.name || customerName || '',
+                  customerPhone: editingOrder?.customer?.phone || customerPhone || '',
+                  guestCount: editingOrder?.guestCount || 1,
+                  notes: editingOrder?.notes || '',
+                  items: (kotData?.kotItems || []).map(ki => ({
+                    name: ki.menuItem?.name || 'Item',
+                    quantity: ki.quantity || 1,
+                    notes: ki.notes || '',
+                    dietaryType: ki.menuItem?.dietaryType || null
+                  })),
+                  footer: settings?.receiptFooterMessage || 'Thank You!',
+                  date: new Date()
+                }
               });
+              if (incResult.dispatched && incResult.needsConfiguration) {
+                addToast(`KOT ${kotNo} sent to the system printer. ${incResult.warning || ''}`.trim(), 'warning');
+              } else if (!incResult.dispatched) {
+                addToast(`KOT ${kotNo} created but NOT printed: ${incResult.error || 'print unavailable'}`, 'error');
+              }
+              if (!incResult.dispatched) closeKotPrintWindow(kotPrintWindow);
             } catch (printErr) {
               // KOT print preview failed — non-critical
+              closeKotPrintWindow(kotPrintWindow);
             }
           }
+        } else {
+          // Business type without a kitchen → no KOT was created, so no ticket
+          // to print. (The kitchen SCREEN toggle never reaches this branch.)
+          closeKotPrintWindow(kotPrintWindow);
         }
       } catch (kotErr) {
+        closeKotPrintWindow(kotPrintWindow);
         const msg = kotErr?.message || '';
         // Real errors only — 'No new items' is now handled as a 200 success above
         // KOT generation failed — toast already shown
@@ -958,6 +1117,7 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
       // on the screen they opened it from.
       finishSession();
     } catch (e) {
+      closeKotPrintWindow(kotPrintWindow);
       addToast(e.message || 'Failed to update order', 'error');
     } finally {
       submittingRef.current = false;
@@ -973,9 +1133,18 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
   // The pending hand-off and any edit-order id are always dropped, so the next
   // session can never inherit them (duplicate items / wrong table).
   const finishSession = () => {
+    // An ADD-ITEM session was opened from another screen (Active Orders).
+    // Return to that screen so the updated order is visible — an edit session
+    // must never bounce the user to Dashboard/Floors as if a new table order
+    // had just been placed.
+    const wasEditSession = isEditing;
     clearPendingTable();
     setActiveOrderTakingId(null);
     setShowTakeOrderWizard(false);
+    if (wasEditSession) {
+      goBackScreen('active_orders');
+      return;
+    }
     if (isPageMode) {
       setScreen(tableFlowReturnScreen);
       return;
@@ -994,10 +1163,14 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
     // and any edit-order id are dropped so the next wizard session starts from
     // its own flow (a stale order id used to silently turn a new order into an
     // edit of a previously resumed order → duplicate items + duplicate KOT).
+    const wasEditSession = isEditing;
     clearPendingTable();
     setActiveOrderTakingId(null);
     setShowTakeOrderWizard(false);
-    if (isPageMode) {
+    if (wasEditSession) {
+      // Back to the screen that started Add Item (Active Orders).
+      goBackScreen('active_orders');
+    } else if (isPageMode) {
       setScreen('dashboard');
     } else {
       const prevScreen = previousScreenRef.current;
@@ -1017,13 +1190,48 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
   // for a VEG_ONLY user) must not render as an empty chip — categories are
   // derived from the VISIBLE items and a stale selection falls back to All.
   const visibleCategories = new Set(menuItems.map((m) => m.category));
+  // Every category the tenant still knows about (API registry + items). A
+  // background menu refresh may temporarily hide a category's items, but that
+  // must NOT silently reset the cashier's selection — only a genuinely
+  // removed/renamed category falls back to All.
+  const knownCategoryNames = new Set([
+    ...categories.map((c) => c.name),
+    ...visibleCategories,
+  ]);
   useEffect(() => {
-    if (selectedCat !== 'All' && !visibleCategories.has(selectedCat)) {
+    // Wait for the menu before validating the selection: at mount the menu is
+    // still empty, so a category restored from session storage (page refresh)
+    // must not be wiped before it can be matched against the loaded menu.
+    if (menuItems.length === 0) return;
+    if (selectedCat !== 'All' && !knownCategoryNames.has(selectedCat)) {
       setSelectedCat('All');
       setSelectedSubcat(SUBCATEGORY_ALL);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCat, menuItems]);
+  }, [selectedCat, menuItems, categories]);
+
+  // Restore the pre-refresh category exactly once, after the menu has loaded.
+  const restoreAppliedRef = useRef(false);
+  useEffect(() => {
+    if (restoreAppliedRef.current || menuItems.length === 0) return;
+    restoreAppliedRef.current = true;
+    const stored = restoredCategory;
+    if (stored && stored !== 'All' && visibleCategories.has(stored)) {
+      setSelectedCat(stored);
+      setSelectedSubcat(SUBCATEGORY_ALL);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menuItems]);
+
+  // Persist the current category so a full page refresh reopens on it.
+  useEffect(() => {
+    if (!restoreAppliedRef.current) return; // never overwrite before restoring
+    try {
+      window.sessionStorage.setItem(CATEGORY_STORAGE_KEY, selectedCat);
+    } catch {
+      // Storage disabled/quota — persistence is a convenience, never a blocker.
+    }
+  }, [selectedCat]);
 
   // Changing category MUST reset the subcategory to All (Part 2 req. 3).
   const handleWizardCategorySelect = (catName) => {
@@ -1068,6 +1276,130 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
       .map((name) => ({ id: `cat-item-${name}`, name })),
   ];
 
+  // PC restaurant rail only: 44px rows and 13px labels at lg+, icon-only 64px
+  // presentation while collapsed. Every other tenant/breakpoint keeps the
+  // existing sidebar classes unchanged.
+  const railCollapsed = isRestaurantTenant && categorySidebarCollapsed;
+
+  // ── Category navigation interaction (scroll, wheel, keyboard) ──
+  // Both the desktop sidebar and the tablet/mobile chip strip are independent
+  // scroll containers. The active entry is revealed by adjusting ONLY that
+  // container's scrollLeft/scrollTop — never with scrollIntoView(), which also
+  // scrolls every ancestor (the AppShell <main> scroller) and made the whole
+  // page jump on mobile. Arrow keys move focus between entries; buttons still
+  // activate on Enter / Space natively.
+  const chipRowRef = useRef(null);
+  const sidebarListRef = useRef(null);
+  const activeChipRef = useRef(null);
+  const activeSidebarRef = useRef(null);
+  const chipCleanupRef = useRef(null);
+  const [chipScroll, setChipScroll] = useState({ left: false, right: false });
+
+  const updateChipScrollState = useCallback(() => {
+    const el = chipRowRef.current;
+    if (!el) return;
+    const max = el.scrollWidth - el.clientWidth;
+    const next = { left: el.scrollLeft > 2, right: max - el.scrollLeft > 2 };
+    setChipScroll((prev) => (
+      prev.left === next.left && prev.right === next.right ? prev : next
+    ));
+  }, []);
+
+  // Reveal an entry inside its own scroll container only.
+  const revealCategory = (container, item, horizontal) => {
+    if (!container || !item) return;
+    const box = container.getBoundingClientRect();
+    const target = item.getBoundingClientRect();
+    if (horizontal) {
+      if (target.left < box.left) container.scrollLeft -= Math.ceil(box.left - target.left + 12);
+      else if (target.right > box.right) container.scrollLeft += Math.ceil(target.right - box.right + 12);
+    } else {
+      if (target.top < box.top) container.scrollTop -= Math.ceil(box.top - target.top + 8);
+      else if (target.bottom > box.bottom) container.scrollTop += Math.ceil(target.bottom - box.bottom + 8);
+    }
+  };
+
+  const setChipRowRef = useCallback((node) => {
+    if (chipCleanupRef.current) {
+      chipCleanupRef.current();
+      chipCleanupRef.current = null;
+    }
+    chipRowRef.current = node;
+    if (!node) return;
+    // A plain mouse wheel scrolls the strip horizontally instead of being
+    // swallowed by the layout. Touch/trackpad horizontal gestures are left to
+    // the browser; only a dominant vertical delta is translated. This is the
+    // ONLY wheel handler on the strip — it is attached once per mount and
+    // removed in the stored cleanup (no duplicates across re-renders).
+    const onWheel = (e) => {
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+      const before = node.scrollLeft;
+      node.scrollLeft = before + e.deltaY;
+      if (node.scrollLeft !== before) e.preventDefault();
+      updateChipScrollState();
+    };
+    node.addEventListener('wheel', onWheel, { passive: false });
+
+    // Edge fades depend on how much is hidden — keep them in sync when the
+    // strip or its contents resize (orientation change, fonts, more categories).
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateChipScrollState) : null;
+    if (ro) ro.observe(node);
+    const raf = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame(updateChipScrollState)
+      : null;
+
+    chipCleanupRef.current = () => {
+      node.removeEventListener('wheel', onWheel);
+      if (ro) ro.disconnect();
+      if (raf != null) cancelAnimationFrame(raf);
+    };
+  }, [updateChipScrollState]);
+
+  useEffect(() => () => {
+    if (chipCleanupRef.current) chipCleanupRef.current();
+  }, []);
+
+  // Reveal the active category after selection and whenever the menu step
+  // re-mounts (Review → Back, Back → Menu) — without moving the page.
+  useEffect(() => {
+    const strip = chipRowRef.current;
+    const list = sidebarListRef.current;
+    if (strip && activeChipRef.current && strip.offsetParent !== null) {
+      revealCategory(strip, activeChipRef.current, true);
+    }
+    if (list && activeSidebarRef.current && list.offsetParent !== null) {
+      revealCategory(list, activeSidebarRef.current, false);
+    }
+    updateChipScrollState();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCat, sidebarCategories.length, currentStep, updateChipScrollState]);
+
+  const moveCategoryFocus = (container, key, horizontal) => {
+    if (!container) return false;
+    const buttons = Array.from(container.querySelectorAll('button'));
+    const current = buttons.indexOf(document.activeElement);
+    if (current < 0) return false;
+    const last = buttons.length - 1;
+    let next = current;
+    if (key === (horizontal ? 'ArrowRight' : 'ArrowDown')) next = Math.min(current + 1, last);
+    else if (key === (horizontal ? 'ArrowLeft' : 'ArrowUp')) next = Math.max(current - 1, 0);
+    else if (key === 'Home') next = 0;
+    else if (key === 'End') next = last;
+    // preventScroll: focusing must never scroll the page/document.
+    buttons[next]?.focus({ preventScroll: true });
+    revealCategory(container, buttons[next], horizontal);
+    return true;
+  };
+
+  const handleCategoryKeyDown = (e, horizontal) => {
+    const keys = horizontal
+      ? ['ArrowLeft', 'ArrowRight', 'Home', 'End']
+      : ['ArrowUp', 'ArrowDown', 'Home', 'End'];
+    if (!keys.includes(e.key)) return;
+    const container = horizontal ? chipRowRef.current : sidebarListRef.current;
+    if (moveCategoryFocus(container, e.key, horizontal)) e.preventDefault();
+  };
+
   const filteredTables = tables.filter(t => {
     if (selectedFloor) return t.floorId === selectedFloor.id;
     return true;
@@ -1102,6 +1434,12 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
   // it beside the title on wide screens and wraps it onto its own compact row
   // on narrow ones (see the header below).
   const isMenuStep = !!orderType && (isTakeaway ? currentStep === 1 : currentStep === 3);
+
+  // Restaurant PC page mode only: the category rail becomes a workspace-level
+  // column (see wizardContent) so its top sits at the ordering header — the
+  // first element below the app header — instead of below the stepper. Every
+  // other context keeps the rail inside the menu step exactly as before.
+  const workspaceCategoryRail = isPageMode && isRestaurantTenant && isMenuStep && desktopRailViewport;
 
   // ONE search implementation: the same `searchQuery` state and the same
   // `filteredItems` derivation as the menu grid below — only its position
@@ -1349,6 +1687,95 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
     </div>
   );
 
+  // ── Category rail (ONE implementation, two mount points) ─────────────────
+  // `railClass` only decides HOW the rail is laid out in its parent:
+  //   • 'hidden md:flex' — inside the menu step (tablet, other business types,
+  //     and the modal wizard): same position as before.
+  //   • 'flex'           — workspace level (restaurant PC page mode): the rail
+  //     spans from the ordering header down to the action bar.
+  // The width/typography/icon rules themselves are identical in both cases.
+  const renderCategoryRail = (railClass) => (
+      <aside className={`${railClass} flex-col shrink-0 min-h-0 border-r border-slate-100 bg-white transition-all duration-200 ${
+        isRestaurantTenant
+          ? (categorySidebarCollapsed ? 'w-40 lg:w-16' : 'w-40 lg:w-[250px]')
+          : 'w-40 lg:w-52'
+      }`}>
+        <div className={`px-3 pt-3 pb-2 shrink-0 flex items-center ${
+          railCollapsed ? 'lg:justify-center lg:px-0' : 'justify-between'
+        }`}>
+          <p className={`text-[9px] font-extrabold uppercase tracking-wider text-slate-400 ${railCollapsed ? 'lg:hidden' : ''}`}>Categories</p>
+          <span className={`text-[9px] font-bold text-slate-400 ${railCollapsed ? 'lg:hidden' : ''}`}>{menuItems.length} items</span>
+          {isRestaurantTenant && (
+            <button type="button"
+              onClick={() => setCategorySidebarCollapsed((collapsed) => !collapsed)}
+              aria-label={categorySidebarCollapsed ? 'Expand category sidebar' : 'Collapse category sidebar'}
+              aria-expanded={!categorySidebarCollapsed}
+              aria-controls="pos-category-list"
+              title={categorySidebarCollapsed ? 'Expand categories' : 'Collapse categories'}
+              className="hidden lg:inline-flex w-7 h-7 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer">
+              {categorySidebarCollapsed
+                ? <ChevronRight className="w-4 h-4" aria-hidden="true" />
+                : <ChevronLeft className="w-4 h-4" aria-hidden="true" />}
+            </button>
+          )}
+        </div>
+        <div ref={sidebarListRef}
+          id="pos-category-list"
+          role="tablist"
+          aria-label="Menu categories"
+          aria-orientation="vertical"
+          onKeyDown={(e) => handleCategoryKeyDown(e, false)}
+          className={`min-h-0 flex-1 overflow-y-auto overscroll-y-contain overscroll-contain touch-pan-y pb-3 space-y-1 ${railCollapsed ? 'px-2 lg:px-1.5' : 'px-2'}`}>
+          <button ref={selectedCat === 'All' ? activeSidebarRef : null}
+            role="tab" aria-selected={selectedCat === 'All'}
+            aria-label="All Items"
+            title="All Items"
+            onClick={() => handleWizardCategorySelect('All')}
+            className={`w-full rounded-xl transition-all cursor-pointer flex items-center gap-2 text-[11px] font-bold ${isRestaurantTenant ? 'h-10 lg:h-11 lg:text-[13px]' : 'h-10'} ${railCollapsed ? 'px-2 lg:justify-center lg:px-0' : 'px-3'} ${
+              selectedCat === 'All'
+                ? 'bg-[#16A34A] text-white shadow-xs'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}>
+            <LayoutGrid className={`w-3.5 h-3.5 shrink-0 ${isRestaurantTenant ? 'lg:w-4 lg:h-4' : ''}`} aria-hidden="true" />
+            <span className={`flex-1 text-left truncate ${railCollapsed ? 'lg:hidden' : ''}`}>All Items</span>
+            <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${railCollapsed ? 'lg:hidden' : ''} ${selectedCat === 'All' ? 'bg-white/20' : 'bg-slate-100 text-slate-500'}`}>
+              {menuItems.length}
+            </span>
+          </button>
+          {sidebarCategories.map(cat => {
+            const CategoryIcon = categoryIconFor(cat.name);
+            return (
+              <button key={cat.id} ref={selectedCat === cat.name ? activeSidebarRef : null}
+                role="tab" aria-selected={selectedCat === cat.name}
+                aria-label={cat.name}
+                title={cat.name}
+                onClick={() => handleWizardCategorySelect(cat.name)}
+                className={`w-full rounded-xl transition-all cursor-pointer flex items-center gap-2 text-[11px] font-bold ${isRestaurantTenant ? 'h-10 lg:h-11 lg:text-[13px]' : 'h-10'} ${railCollapsed ? 'px-2 lg:justify-center lg:px-0' : 'px-3'} ${
+                  selectedCat === cat.name
+                    ? 'bg-[#16A34A] text-white shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-100'
+                }`}>
+                {/* Icons are a restaurant PC addition — tablet (md–lg) and
+                    other business types keep their icon-free rows. */}
+                {isRestaurantTenant && (
+                  <CategoryIcon className="hidden lg:block w-4 h-4 shrink-0" aria-hidden="true" />
+                )}
+                <span className={`flex-1 text-left truncate ${railCollapsed ? 'lg:hidden' : ''}`}>{cat.name}</span>
+                <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${railCollapsed ? 'lg:hidden' : ''} ${selectedCat === cat.name ? 'bg-white/20' : 'bg-slate-100 text-slate-500'}`}>
+                  {countForCategory(cat.name)}
+                </span>
+              </button>
+            );
+          })}
+          {sidebarCategories.length === 0 && !menuError && (
+            <p className="px-2 py-3 text-[10px] text-slate-400 leading-relaxed">
+              No categories yet — items show under All Items.
+            </p>
+          )}
+        </div>
+      </aside>
+  );
+
   // ── Menu Step (Shared) ──
   const renderMenu = () => (
     <div className="flex-1 flex flex-col overflow-hidden min-h-0">
@@ -1360,12 +1787,29 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
           Search still spans the COMPLETE menu regardless of the selected
           category — see filteredItems above. */}
 
-      {/* Compact category selector — small screens only (sidebar takes over
-          from md up). Horizontal chips keep the menu usable without stealing
-          width from the item grid. */}
-      <div className="md:hidden shrink-0 border-b border-slate-100 bg-white">
-        <div className="flex gap-1.5 overflow-x-auto px-3 py-2 no-scrollbar">
-          <button onClick={() => handleWizardCategorySelect('All')}
+      {/* Compact category selector — PHONES only (below md). ONE non-wrapping,
+          horizontally swipeable row: chips never wrap onto a second line, never
+          widen the item grid, and every category stays reachable by swiping.
+          The edge fades are the scroll affordance. Tablets (md+) use the
+          persistent sidebar below instead. */}
+      <div className="relative min-w-0 max-w-full shrink-0 border-b border-slate-100 bg-white md:hidden">
+        {chipScroll.left && (
+          <span aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 left-0 z-10 w-7 bg-gradient-to-r from-white via-white/80 to-transparent" />
+        )}
+        {chipScroll.right && (
+          <span aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 right-0 z-10 w-7 bg-gradient-to-l from-white via-white/80 to-transparent" />
+        )}
+        <div ref={setChipRowRef}
+          role="tablist"
+          aria-label="Menu categories"
+          onKeyDown={(e) => handleCategoryKeyDown(e, true)}
+          onScroll={updateChipScrollState}
+          className="flex flex-nowrap items-center gap-1.5 overflow-x-auto overflow-y-hidden overscroll-x-contain px-3 py-2 no-scrollbar touch-pan-x">
+          <button ref={selectedCat === 'All' ? activeChipRef : null}
+            role="tab" aria-selected={selectedCat === 'All'}
+            onClick={() => handleWizardCategorySelect('All')}
             className={`shrink-0 h-9 px-3.5 text-[11px] font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
               selectedCat === 'All'
                 ? 'bg-[#16A34A] text-white shadow-xs'
@@ -1378,13 +1822,16 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
             </span>
           </button>
           {sidebarCategories.map(cat => (
-            <button key={cat.id} onClick={() => handleWizardCategorySelect(cat.name)}
+            <button key={cat.id} ref={selectedCat === cat.name ? activeChipRef : null}
+              role="tab" aria-selected={selectedCat === cat.name}
+              title={cat.name}
+              onClick={() => handleWizardCategorySelect(cat.name)}
               className={`shrink-0 h-9 px-3.5 text-[11px] font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
                 selectedCat === cat.name
                   ? 'bg-[#16A34A] text-white shadow-xs'
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}>
-              {cat.name}
+              <span className="max-w-[9rem] truncate">{cat.name}</span>
               <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${selectedCat === cat.name ? 'bg-white/20' : 'bg-slate-200 text-slate-500'}`}>
                 {countForCategory(cat.name)}
               </span>
@@ -1393,50 +1840,11 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
         </div>
       </div>
 
-      <div className="flex-1 flex overflow-hidden min-h-0">
-      {/* Category sidebar (md+) — fixed width, vertically scrollable. Only
-          THIS list scrolls; the step/page never scrolls with it. */}
-      <aside className="hidden md:flex flex-col w-44 lg:w-52 shrink-0 border-r border-slate-100 bg-white">
-        <div className="px-3 pt-3 pb-2 shrink-0 flex items-center justify-between">
-          <p className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400">Categories</p>
-          <span className="text-[9px] font-bold text-slate-400">{menuItems.length} items</span>
-        </div>
-        <div className="flex-1 overflow-y-auto overscroll-contain px-2 pb-3 space-y-1">
-          <button onClick={() => handleWizardCategorySelect('All')}
-            className={`w-full h-10 px-3 text-[11px] font-bold rounded-xl transition-all cursor-pointer flex items-center gap-2 ${
-              selectedCat === 'All'
-                ? 'bg-[#16A34A] text-white shadow-xs'
-                : 'text-slate-600 hover:bg-slate-100'
-            }`}>
-            <LayoutGrid className="w-3.5 h-3.5 shrink-0" />
-            <span className="flex-1 text-left truncate">All Items</span>
-            <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${selectedCat === 'All' ? 'bg-white/20' : 'bg-slate-100 text-slate-500'}`}>
-              {menuItems.length}
-            </span>
-          </button>
-          {sidebarCategories.map(cat => (
-            <button key={cat.id} onClick={() => handleWizardCategorySelect(cat.name)}
-              className={`w-full h-10 px-3 text-[11px] font-bold rounded-xl transition-all cursor-pointer flex items-center gap-2 ${
-                selectedCat === cat.name
-                  ? 'bg-[#16A34A] text-white shadow-xs'
-                  : 'text-slate-600 hover:bg-slate-100'
-              }`}>
-              <span className="flex-1 text-left truncate">{cat.name}</span>
-              <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${selectedCat === cat.name ? 'bg-white/20' : 'bg-slate-100 text-slate-500'}`}>
-                {countForCategory(cat.name)}
-              </span>
-            </button>
-          ))}
-          {sidebarCategories.length === 0 && !menuError && (
-            <p className="px-2 py-3 text-[10px] text-slate-400 leading-relaxed">
-              No categories yet — items show under All Items.
-            </p>
-          )}
-        </div>
-      </aside>
+      <div className="flex-1 flex overflow-hidden min-h-0 min-w-0">
+      {!workspaceCategoryRail && renderCategoryRail('hidden md:flex')}
 
       {/* Right column: subcategory row + item grid */}
-      <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+      <div className="flex-1 flex flex-col overflow-hidden min-h-0 min-w-0">
 
       {/* LEVEL 2 — Subcategory tab row for the selected category (Part 2 req. 1-4):
           Category → Subcategory → Items. Category change resets this to All. */}
@@ -1483,7 +1891,7 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
           </div>
         ) : (
         <>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+        <div className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 ${isRestaurantTenant ? '2xl:grid-cols-6' : ''}`}>
           {filteredItems.map(item => {
             const inCart = cart.find(c => c.itemId === item.id);
             const outOfStock = item.stockStatus === 'Out of Stock';
@@ -1691,10 +2099,20 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
               </button>
             ) : (
             <>
+            {/* No configured kitchen printer — printed through the system print
+                dialog instead, with an explicit warning (never a silent claim). */}
+            {kotCapable && !printerConfigured && (
+              <div className="col-span-2 flex items-center gap-2 px-3 py-2 rounded-xl border border-amber-200 bg-amber-50">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <p className="text-[10px] font-semibold text-amber-800">
+                  No printer configured — the KOT prints via the system dialog. Add one in POS Settings → Printer Configuration.
+                </p>
+              </div>
+            )}
             {/* Print KOT — the ONE action that creates the order and issues its
-                kitchen ticket while the kitchen module is enabled. Hidden when
-                the kitchen module is OFF (Place Order is used in that mode). */}
-            {settings.enableKitchen !== false && (
+                kitchen ticket. Available for EVERY kitchen-capable business: the
+                Kitchen screen visibility toggle must never disable KOT printing. */}
+            {kotCapable && (
             <button onClick={handlePrintKot} disabled={submitting !== null || (needsTable && !selectedTable)}
               className="p-3 border-2 border-orange-200 rounded-2xl hover:border-[#C85A32] hover:bg-orange-50 transition-all text-center cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
               <Printer className="w-5 h-5 text-[#C85A32] mx-auto mb-1" />
@@ -1702,14 +2120,15 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
               <p className="text-[8px] text-orange-500 mt-0.5">Send to kitchen</p>
             </button>
             )}
-            {/* Place Order — only for the kitchen-OFF configuration: creates the
-                order without a kitchen ticket, payment stays with the cashier. */}
-            {settings.enableKitchen === false && (
+            {/* Place Order — only for a business WITHOUT the kitchen capability:
+                creates the order without a kitchen ticket, payment stays with
+                the cashier. A food business never sees this in place of KOT. */}
+            {!kotCapable && (
             <button onClick={handlePlaceOrder} disabled={submitting !== null || (needsTable && !selectedTable)}
               className="p-3 border-2 border-emerald-200 rounded-2xl hover:border-[#16A34A] hover:bg-emerald-50 transition-all text-center cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
               <Save className="w-5 h-5 text-emerald-600 mx-auto mb-1" />
               <p className="text-[10px] font-extrabold text-emerald-700">Place Order</p>
-              <p className="text-[8px] text-emerald-500 mt-0.5">No KOT · pay at cashier, {currency}{grandTotal.toFixed(0)}</p>
+              <p className="text-[8px] text-emerald-500 mt-0.5">No kitchen ticket · pay at cashier, {currency}{grandTotal.toFixed(0)}</p>
             </button>
             )}
             </>
@@ -1783,9 +2202,12 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
     );
   }
 
-  const wizardContent = (
+  // Ordering workspace = header row + stepper + step content. In POS Ordering
+  // page mode for a restaurant on desktop the category rail is mounted OUTSIDE
+  // this block (see wizardContent) so it starts at the ordering header — the
+  // first element below the app header — instead of below the stepper.
+  const wizardWorkspace = (
     <>
-        
         {/* Header — one compact row on desktop: back + title, the menu search,
             then the table/order badges. On narrow widths the search wraps onto
             its own row (order-last) instead of overflowing. */}
@@ -1862,6 +2284,26 @@ export default function TakeOrderWizard({ mode = 'modal' } = {}) {
           {isTakeaway && currentStep === 1 && renderMenu()}
           {isTakeaway && currentStep === 2 && renderReview()}
         </div>
+    </>
+  );
+
+  const wizardContent = (
+    <>
+      {/* Restaurant PC page mode: the category rail is a workspace-level column,
+          so its top aligns with the ordering header (directly below the app
+          header) and its bottom meets the action bar. ONE rail instance —
+          renderMenu skips its own copy in this branch. The footer stays OUTSIDE
+          this row at full width, so the rail always ends above it and never
+          covers Back / Review. The row is a definite-height flex child, so the
+          category list alone scrolls and the page never scrolls. */}
+      {workspaceCategoryRail ? (
+        <div className="flex-1 flex min-h-0 min-w-0 overflow-hidden">
+          {renderCategoryRail('flex')}
+          <div className="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden">
+            {wizardWorkspace}
+          </div>
+        </div>
+      ) : wizardWorkspace}
 
         {/* Footer Navigation */}
         {/* Auto-advance steps (Order Type / Floor / Table) no longer show a

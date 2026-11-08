@@ -10,6 +10,9 @@ import {
 import { useSettingsStore, useUiStore, useAuthStore } from '../../../store';
 import { getBusinessCapabilities, isBasicPosFoodBusiness } from '../../../utils/businessCapabilities';
 import { FEATURE_FOR_SETTING, hasFeature } from '../../../utils/permissions';
+import { sanitizeNumeric } from '../../../utils/numericHelpers';
+import { resolveAssetUrl } from '../../../utils/assetUrl';
+import KotPrinterStatus from '../../kitchen/components/KotPrinterStatus';
 
 // ─── Reusable UI Components ─────────────────────────────────────────────────
 
@@ -157,7 +160,7 @@ const MODULE_TOGGLES = [
   {
     key: 'enableKitchen',
     label: 'Enable Kitchen (KOT)',
-    description: 'If OFF: Customer Order → Direct Billing → Payment → Complete (no KOT). If ON: Generate KOT → Kitchen → Ready → Billing',
+    description: 'Controls the Kitchen Tickets SCREEN only. If OFF: the screen is hidden, but KOTs are still generated and printed (KOT printing is mandatory) and print status/retry stay available in Active Orders. If ON: Generate KOT → Kitchen → Ready → Billing',
     modes: ['restaurant', 'hybrid'],
   },
   {
@@ -213,17 +216,32 @@ const MODULE_TOGGLES = [
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
-  const { settings, fetchSettings, saveSettings, updateSettings, loading, saving, error, clearError, uploadLogo, deleteLogo, barcodeScannerAvailable } = useSettingsStore();
+  const { settings, fetchSettings, saveSettings, updateSettings, loading, saving, error, clearError, uploadLogo, deleteLogo, barcodeScannerAvailable, barcodeScannerSupported } = useSettingsStore();
   const { addToast, setScreen } = useUiStore();
   const { logout, changePassword, subscription } = useAuthStore();
-  const [activeSection, setActiveSection] = useState('general');
+  // A pending section (e.g. "Configure printer" from the kitchen/printer
+  // status panel) wins over the default General tab. It is consumed on mount
+  // and cleared so the next visit starts on General again.
+  const [activeSection, setActiveSection] = useState(
+    () => useUiStore.getState().settingsSection || 'general'
+  );
   const [searchQuery, setSearchQuery] = useState('');
   const [logoUploading, setLogoUploading] = useState(false);
   const [showPrinterModal, setShowPrinterModal] = useState(false);
-  const [printerForm, setPrinterForm] = useState({ name: '', type: 'Kitchen', connection: 'Network (TCP/IP)', ipOrAddress: '', port: 9100 });
+  // Port is kept as TEXT while typing (a cleared field stays empty, "3" stays
+  // "3"); it is converted + range-checked when the printer is added.
+  const [printerForm, setPrinterForm] = useState({ name: '', type: 'Kitchen', connection: 'Network (TCP/IP)', ipOrAddress: '', port: '9100' });
   // Change Password (self-service)
   const [passwordForm, setPasswordForm] = useState({ current: '', next: '', confirm: '' });
   const [passwordSaving, setPasswordSaving] = useState(false);
+
+  useEffect(() => {
+    // Consume the pending section once, then restore the default so a later
+    // visit to POS Settings is not forced onto the Printer tab.
+    const pending = useUiStore.getState().settingsSection;
+    if (pending && pending !== 'general') setActiveSection(pending);
+    useUiStore.getState().setSettingsSection('general');
+  }, []);
 
   // Initial load - only fetch if settings haven't been loaded recently
   useEffect(() => {
@@ -391,19 +409,26 @@ export default function SettingsPage() {
       addToast('Please fill in printer name and IP address', 'error');
       return;
     }
+    // ── Submit-boundary validation for the TCP port ──
+    const rawPort = String(printerForm.port ?? '').trim();
+    const port = rawPort === '' ? 9100 : Number(rawPort);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      addToast('Port must be a whole number between 1 and 65535', 'error');
+      return;
+    }
     const newPrinter = {
       id: `printer-${Date.now()}`,
       name: printerForm.name,
       type: printerForm.type,
       connection: printerForm.connection,
       ipOrAddress: printerForm.ipOrAddress,
-      port: printerForm.port,
+      port,
       status: 'Online',
       addedAt: new Date().toISOString(),
     };
     updateSettings({ printers: [...(settings.printers || []), newPrinter] });
     setShowPrinterModal(false);
-    setPrinterForm({ name: '', type: 'Kitchen', connection: 'Network (TCP/IP)', ipOrAddress: '', port: 9100 });
+    setPrinterForm({ name: '', type: 'Kitchen', connection: 'Network (TCP/IP)', ipOrAddress: '', port: '9100' });
     addToast(`Printer "${newPrinter.name}" added`, 'success');
   };
 
@@ -529,15 +554,39 @@ export default function SettingsPage() {
                   </p>
                 </div>
               </div>
-              {/* Part 11: Barcode Scanner — plan entitlement is the upper limit.
-                  The card only appears when the plan includes barcode_scanner;
-                  the tenant ADMIN toggle then decides whether scanners are active. */}
-              {barcodeScannerAvailable ? (
+              {/* Part 11: Barcode Scanner — THREE gates, in order:
+                  business type (capability) → plan entitlement → tenant toggle.
+                  The card always renders, but what it shows reflects the
+                  SAVED configuration for THIS business type — never a default.
+                  `null` = the capability has not resolved yet (settings still
+                  loading); nothing is offered until the business type is known. */}
+              {barcodeScannerSupported === null || barcodeScannerSupported === undefined ? (
+                <div className="mt-3 flex items-center gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50">
+                  <ScanBarcode className="w-4 h-4 text-slate-400 shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-[10px] font-bold text-slate-600">Barcode Scanner</p>
+                    <p className="text-[9px] text-slate-400 mt-0.5">
+                      Checking whether barcode scanning is available for this business…
+                    </p>
+                  </div>
+                </div>
+              ) : barcodeScannerSupported === false ? (
+                <div className="mt-3 flex items-center gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50">
+                  <ScanBarcode className="w-4 h-4 text-slate-400 shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-[10px] font-bold text-slate-600">Barcode Scanner</p>
+                    <p className="text-[9px] text-slate-400 mt-0.5">
+                      Not available for this business type ({settings.businessType || 'Unknown'}).
+                      Manual item search and ordering work as usual.
+                    </p>
+                  </div>
+                </div>
+              ) : barcodeScannerAvailable ? (
                 <div className="mt-3">
                   <ToggleSwitch checked={settings.barcodeScannerEnabled === true}
                     onChange={(v) => handleFieldChange('barcodeScannerEnabled', v)}
                     label="Enable Barcode Scanner"
-                    description="If ON: USB/Bluetooth barcode scanners can add sellable items to the bill in POS Ordering and Basic POS. Items without a barcode are still added manually." />
+                    description="If ON: USB/Bluetooth barcode scanners can add sellable items to the bill in POS Ordering and Basic POS. Items without a barcode are still added manually. Camera scanning is not supported." />
                 </div>
               ) : (
                 <div className="mt-3 flex items-center gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50">
@@ -681,7 +730,7 @@ export default function SettingsPage() {
                 <div className="relative shrink-0">
                   {settings.branding.logo ? (
                     <div className="relative group">
-                      <img src={settings.branding.logo} alt="Logo" className="w-20 h-20 rounded-xl object-cover border border-slate-200" referrerPolicy="no-referrer" />
+                      <img src={resolveAssetUrl(settings.branding.logo)} alt="Logo" className="w-20 h-20 rounded-xl object-cover border border-slate-200" referrerPolicy="no-referrer" />
                       <button onClick={handleDeleteLogo} aria-label="Remove logo" className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center transition-all cursor-pointer hover:bg-red-600 shadow-sm">
                         <X className="w-3 h-3" />
                       </button>
@@ -793,6 +842,14 @@ export default function SettingsPage() {
       case 'printer':
         return (
           <SectionCard title="Printer Configuration" description="Manage printers for receipts and kitchen tickets" icon={Printer}>
+            {/* Compact, responsive status: Printer configured / System print
+                dialog / Printer unavailable, with a test print through the
+                SAME browser print path the KOTs use. */}
+            <KotPrinterStatus
+              className="mb-3"
+              configureLabel="Add printer"
+              onConfigure={() => setShowPrinterModal(true)}
+            />
             {(settings.printers || []).length === 0 ? (
               <EmptyState icon={Printer} title="No Printers Configured" description="Add a printer to start printing receipts and kitchen tickets"
                 action={
@@ -1019,7 +1076,7 @@ export default function SettingsPage() {
                 </div>
                 <div className="space-y-1">
                   <label className="text-[9px] font-bold uppercase text-slate-400">Port</label>
-                  <input type="number" inputMode="numeric" value={printerForm.port} onChange={(e) => setPrinterForm(p => ({ ...p, port: parseInt(e.target.value) || 9100 }))} className="w-full h-8 px-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-[#16A34A] transition-all" />
+                  <input type="number" inputMode="numeric" min="1" max="65535" step="1" value={printerForm.port} onChange={(e) => setPrinterForm(p => ({ ...p, port: sanitizeNumeric(e.target.value) }))} className="w-full h-8 px-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-[#16A34A] transition-all" />
                 </div>
               </div>
               <div className="flex gap-2 pt-2 border-t border-slate-100">

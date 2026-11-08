@@ -10,13 +10,19 @@
  * re-derives and enforces them server-side.
  *
  * featureVisible = businessCapability && planCapability && userPermission
+ *
+ * `barcode` is a PRODUCT-catalogue capability: only retail verticals
+ * (products = true) expose a barcoded catalogue, so every food/kitchen vertical
+ * keeps barcode = false. POS Settings, the keyboard-wedge hook and the POS
+ * ordering screens all read this one flag — a restaurant can never be offered
+ * the scanner toggle.
  */
 
 export const BUSINESS_CAPABILITIES = {
   RESTAURANT: {
     food: true, dietary: true, kitchen: true, kot: true,
     tables: true, floors: true, menu: true, products: false,
-    barcode: true, inventory: true, stock: true, variants: false,
+    barcode: false, inventory: true, stock: true, variants: false,
     customers: true,
   },
   // CAFE/BAR are BASIC_POS food businesses (§11): counter workflow with
@@ -25,31 +31,31 @@ export const BUSINESS_CAPABILITIES = {
   CAFE: {
     food: true, dietary: true, kitchen: true, kot: true,
     tables: false, floors: false, menu: true, products: false,
-    barcode: true, inventory: true, stock: true, variants: false,
+    barcode: false, inventory: true, stock: true, variants: false,
     customers: true,
   },
   BAR: {
     food: true, dietary: true, kitchen: true, kot: true,
     tables: false, floors: false, menu: true, products: false,
-    barcode: true, inventory: true, stock: true, variants: false,
+    barcode: false, inventory: true, stock: true, variants: false,
     customers: true,
   },
   FOOD_TRUCK: {
     food: true, dietary: true, kitchen: true, kot: true,
     tables: false, floors: false, menu: true, products: false,
-    barcode: true, inventory: true, stock: true, variants: false,
+    barcode: false, inventory: true, stock: true, variants: false,
     customers: true,
   },
   CLOUD_KITCHEN: {
     food: true, dietary: true, kitchen: true, kot: true,
     tables: false, floors: false, menu: true, products: false,
-    barcode: true, inventory: true, stock: true, variants: false,
+    barcode: false, inventory: true, stock: true, variants: false,
     customers: true,
   },
   FOOD_COURT: {
     food: true, dietary: true, kitchen: true, kot: true,
     tables: true, floors: true, menu: true, products: false,
-    barcode: true, inventory: true, stock: true, variants: false,
+    barcode: false, inventory: true, stock: true, variants: false,
     customers: true,
   },
   // BAKERY is a BASIC_POS food business (café/bakery/bar/food-truck/cloud-
@@ -59,7 +65,7 @@ export const BUSINESS_CAPABILITIES = {
   BAKERY: {
     food: true, dietary: true, kitchen: true, kot: true,
     tables: false, floors: false, menu: true, products: false,
-    barcode: true, inventory: true, stock: true, variants: false,
+    barcode: false, inventory: true, stock: true, variants: false,
     customers: true,
   },
   CLOTHING: {

@@ -2,22 +2,23 @@ import React, { useState, useEffect, useRef } from 'react';
 import { superAdminApi } from '../../../api/superAdmin.api';
 import { Loader2, Save, RefreshCw, RotateCcw, Shield, AlertTriangle, Mail, Send, CheckCircle2, XCircle, Cloud } from 'lucide-react';
 import ConfirmationDialog from '../../../components/ConfirmationDialog';
+import { sanitizeNumeric } from '../../../utils/numericHelpers';
 
 // Backend masks configured secrets with this marker — the UI treats it as
 // "preserved": typing nothing keeps the stored (encrypted) value.
 const SECRET_MASK = '********';
 
 const SETTING_FIELDS = [
-  { key: 'platform_name', label: 'Platform Name', type: 'text', default: 'KlarGo POS' },
-  { key: 'default_trial_days', label: 'Default Trial Days', type: 'number', default: 15 },
+  { key: 'platform_name', label: 'Platform Name', type: 'text', default: 'QWIKOUT POS' },
+  { key: 'default_trial_days', label: 'Default Trial Days', type: 'number', default: 15, min: 1, max: 365, integer: true },
   { key: 'maintenance_mode', label: 'Maintenance Mode', type: 'boolean', default: false },
-  { key: 'max_file_upload_mb', label: 'Max File Upload (MB)', type: 'number', default: 5 },
+  { key: 'max_file_upload_mb', label: 'Max File Upload (MB)', type: 'number', default: 5, min: 1, max: 1024, integer: true },
   // SMTP host/port/user/pass/from removed — the dedicated "Email (Microsoft
   // Graph) Configuration" section below is the single email config surface.
   { key: 'payment_gateway', label: 'Payment Gateway', type: 'select', options: ['RAZORPAY', 'CASHFREE', 'PHONEPE', 'PAYTM', 'STRIPE', 'NONE'], default: 'NONE' },
   { key: 'razorpay_key', label: 'Razorpay Key', type: 'text', default: '' },
   { key: 'razorpay_secret', label: 'Razorpay Secret', type: 'password', default: '' },
-  { key: 'tax_percentage', label: 'Default Tax %', type: 'number', default: 5 },
+  { key: 'tax_percentage', label: 'Default Tax %', type: 'number', default: 5, min: 0, max: 100 },
   { key: 'currency', label: 'Default Currency', type: 'text', default: 'INR' },
 ];
 
@@ -79,11 +80,24 @@ export default function SystemSettings() {
 
   const handleSaveEmail = async () => {
     if (emailSaving || !emailCfg) return;
+    // SMTP port is edited as text (clearable, no leading zeros) and validated
+    // here at the submit boundary.
+    const portRaw = String(emailCfg.port ?? '').trim();
+    if (portRaw !== '') {
+      const port = Number(portRaw);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        showToast('SMTP port must be a whole number between 1 and 65535.', 'error');
+        return;
+      }
+    }
     // Only send changed fields; the masked password is sent as-is (preserved).
     const payload = {};
     ['enabled', 'host', 'port', 'secure', 'user', 'password', 'fromName', 'fromEmail', 'replyTo', 'superAdminNotificationEmails'].forEach((k) => {
       if (JSON.stringify(emailCfg[k]) !== JSON.stringify(emailOriginal?.[k])) payload[k] = emailCfg[k];
     });
+    if (payload.port !== undefined) {
+      payload.port = portRaw === '' ? null : Number(portRaw);
+    }
     if (Object.keys(payload).length === 0) { showToast('No email changes to save.'); return; }
     setEmailSaving(true);
     try {
@@ -198,6 +212,24 @@ export default function SystemSettings() {
     setSettings(prev => ({ ...prev, [key]: value }));
   };
 
+  /**
+   * Validate numeric fields at the SUBMIT boundary (they are edited as text so
+   * the user can clear and retype them without leading zeros or a forced 0).
+   */
+  const validateNumericFields = () => {
+    for (const field of SETTING_FIELDS) {
+      if (field.type !== 'number') continue;
+      const raw = String(settings[field.key] ?? '').trim();
+      if (raw === '') return `${field.label} is required.`;
+      const value = Number(raw);
+      if (!Number.isFinite(value)) return `${field.label} must be a valid number.`;
+      if (field.integer && !Number.isInteger(value)) return `${field.label} must be a whole number.`;
+      if (field.min !== undefined && value < field.min) return `${field.label} must be at least ${field.min}.`;
+      if (field.max !== undefined && value > field.max) return `${field.label} must be at most ${field.max}.`;
+    }
+    return null;
+  };
+
   // Build the payload of CHANGED fields only. Unchanged secrets stay out of the
   // request entirely, so the backend preserves the stored (encrypted) value.
   const buildPayload = () => {
@@ -207,13 +239,16 @@ export default function SystemSettings() {
       const orig = original[f.key];
       if (sameValue(cur, orig)) return; // unchanged — never send back
       if (f.type === 'password' && cur === SECRET_MASK) return; // masked placeholder → preserve
-      payload[f.key] = cur;
+      // Numeric fields are edited as text; convert exactly once, here.
+      payload[f.key] = f.type === 'number' ? Number(String(cur).trim()) : cur;
     });
     return payload;
   };
 
   const handleSave = async () => {
     if (savingRef.current) return; // double-click guard
+    const numericError = validateNumericFields();
+    if (numericError) { showToast(numericError, 'error'); return; }
     const payload = buildPayload();
     if (Object.keys(payload).length === 0) return;
     savingRef.current = true;
@@ -303,8 +338,15 @@ export default function SystemSettings() {
                 ) : (
                   <input
                     type={field.type || 'text'}
-                    value={value}
-                    onChange={e => handleChange(field.key, field.type === 'number' ? Number(e.target.value) : e.target.value)}
+                    inputMode={field.type === 'number' ? 'numeric' : undefined}
+                    min={field.min}
+                    max={field.max}
+                    step={field.integer ? 1 : 'any'}
+                    value={field.type === 'number' ? String(value ?? '') : value}
+                    onChange={e => handleChange(
+                      field.key,
+                      field.type === 'number' ? sanitizeNumeric(e.target.value) : e.target.value
+                    )}
                     disabled={saving}
                     className="w-full h-11 px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold outline-none focus:border-[#16A34A] disabled:opacity-50"
                   />
@@ -483,7 +525,7 @@ export default function SystemSettings() {
                   </div>
                   <div className="flex flex-col gap-2">
                     <label className="text-xs font-bold text-slate-600">SMTP Port</label>
-                    <input type="number" inputMode="numeric" value={emailCfg.port ?? 587} onChange={(e) => handleEmailField('port', Number(e.target.value))} disabled={emailSaving}
+                    <input type="number" inputMode="numeric" min="1" max="65535" step="1" value={emailCfg.port ?? '587'} onChange={(e) => handleEmailField('port', sanitizeNumeric(e.target.value))} disabled={emailSaving}
                       placeholder="587"
                       className="w-full h-11 px-3 bg-white border border-slate-200 rounded-xl text-xs font-semibold outline-none focus:border-[#16A34A] disabled:opacity-50" />
                   </div>

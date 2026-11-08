@@ -1,6 +1,7 @@
 import React from 'react';
 import { AlertTriangle, Crown, Menu } from 'lucide-react';
 import { useAuthStore, useUiStore, useSettingsStore } from '../../../store';
+import BrandLogo from '../../common/BrandLogo';
 import UserProfileDropdown from './UserProfileDropdown';
 
 export default function Header() {
@@ -38,6 +39,9 @@ export default function Header() {
         >
           <Menu className="w-5 h-5" />
         </button>
+        {/* Compact platform identity in the top bar (never replaces the
+            tenant's own name/logo in the sidebar). */}
+        <BrandLogo className="hidden sm:inline-flex h-7 w-[88px] md:w-[104px]" />
         {!isSuperAdmin && settings?.showTerminalId && (
           <span className="text-xs font-bold uppercase tracking-wider text-slate-400 font-mono hidden md:block">
             Station ID: Terminal 04

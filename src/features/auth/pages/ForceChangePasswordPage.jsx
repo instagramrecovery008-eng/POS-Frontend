@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { KeyRound, AlertTriangle, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
 import useAuthStore from '../../../store/authStore';
 import { authApi } from '../../../api/auth.api';
+import BrandLogo from '../../../components/common/BrandLogo';
 
 /**
  * Forced first-login password change.
@@ -56,7 +57,8 @@ export default function ForceChangePasswordPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center p-4 select-none font-sans">
+    <div className="min-h-screen bg-[#F8FAFC] flex flex-col items-center justify-center p-4 select-none font-sans">
+      <BrandLogo priority className="mb-5 h-14 w-[190px] sm:h-16 sm:w-[220px]" />
       <div className="w-full max-w-md bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
         <div className="flex items-center gap-3 mb-5">
           <div className="w-11 h-11 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center">

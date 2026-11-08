@@ -4,6 +4,8 @@ import { X, Loader2, Eye, EyeOff } from 'lucide-react';
 import { emailError as emailFieldError, emailOptionalError, normalizeEmail } from '../../../utils/email';
 import { getBusinessCapabilities } from '../../../utils/businessCapabilities';
 import { BUSINESS_TYPES, filterPlansForBusinessType } from '../../../utils/businessTypes';
+import { sanitizeNumeric } from '../../../utils/numericHelpers';
+import { PLATFORM_ROOT_DOMAIN } from '../../../config/tenantConfig';
 
 const CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'AED'];
 const LANGUAGES = ['en', 'hi', 'gu', 'fr', 'ar'];
@@ -30,6 +32,7 @@ export default function RestaurantForm({ restaurant, onClose, onSaved }) {
     gstNumber: restaurant?.gstNumber || '',
     fssaiNumber: restaurant?.fssaiNumber || '',
     website: restaurant?.website || '',
+    subdomain: restaurant?.subdomain || '',
     address: restaurant?.address || '',
     country: restaurant?.country || 'India',
     state: restaurant?.state || '',
@@ -43,7 +46,9 @@ export default function RestaurantForm({ restaurant, onClose, onSaved }) {
     subscriptionPlan: restaurant?.plan || '',
     planId: restaurant?.planId || '',
     businessType: restaurant?.businessType || 'RESTAURANT',
-    trialDays: 15,
+    // Kept as TEXT while typing so the field can be cleared and "3" stays "3";
+    // converted + range-checked on submit.
+    trialDays: '15',
     logo: restaurant?.logo || '',
     // Admin fields (for create only)
     adminName: '',
@@ -66,11 +71,25 @@ export default function RestaurantForm({ restaurant, onClose, onSaved }) {
     if (!form.ownerName.trim()) { setError('Owner name is required'); return; }
     if (!form.mobile.trim()) { setError('Mobile number is required'); return; }
 
+    // Workspace label (optional on create → derived from the name server-side).
+    const cleanSubdomain = form.subdomain.trim().toLowerCase();
+    if (cleanSubdomain && !/^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/.test(cleanSubdomain)) {
+      setError('Workspace subdomain may only contain lowercase letters, numbers and hyphens');
+      return;
+    }
+
     // For creation, validate admin fields. NO legal-acceptance gating —
     // Super Admin → Add Restaurant is a PLATFORM ADMINISTRATIVE operation;
     // mandatory Terms/Privacy acceptance belongs to the new-user
     // self-serve registration flow only.
     if (!isEdit) {
+      // Trial days: whole number, 1–365.
+      const rawTrial = String(form.trialDays ?? '').trim();
+      const trialDays = rawTrial === '' ? 15 : Number(rawTrial);
+      if (!Number.isInteger(trialDays) || trialDays < 1 || trialDays > 365) {
+        setError('Trial days must be a whole number between 1 and 365');
+        return;
+      }
       if (!form.adminName.trim()) { setError('Admin name is required'); return; }
       const adminEmailMsg = emailFieldError(form.adminEmail);
       if (adminEmailMsg) { setError(adminEmailMsg); return; }
@@ -99,6 +118,7 @@ export default function RestaurantForm({ restaurant, onClose, onSaved }) {
           currency: form.currency,
           language: form.language,
           logo: form.logo || undefined,
+          subdomain: cleanSubdomain || undefined,
           // Dietary mode change updates tenant RestaurantSetting; existing
           // menu items are never silently modified.
           dietaryMode: form.dietaryMode || undefined,
@@ -111,6 +131,7 @@ export default function RestaurantForm({ restaurant, onClose, onSaved }) {
         const selectedPlan = eligiblePlans.find((p) => p.code === form.subscriptionPlan);
         await superAdminApi.createRestaurant({
           ...form,
+          trialDays: Number(String(form.trialDays ?? '').trim() || 15),
           email: form.email ? normalizeEmail(form.email) : '',
           adminEmail: normalizeEmail(form.adminEmail),
           planId: selectedPlan?.id || undefined,
@@ -165,6 +186,21 @@ export default function RestaurantForm({ restaurant, onClose, onSaved }) {
               <div className="space-y-1">
                 <label className="text-[10px] font-bold text-slate-600">Mobile *</label>
                 <input value={form.mobile} onChange={e => handleChange('mobile', e.target.value)} className="w-full h-9 px-3 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold outline-none focus:border-[#16A34A]" />
+              </div>
+              <div className="space-y-1 col-span-2">
+                <label className="text-[10px] font-bold text-slate-600">Workspace Subdomain</label>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    value={form.subdomain}
+                    onChange={e => handleChange('subdomain', e.target.value.toLowerCase())}
+                    placeholder="auto-generated from the name"
+                    className="w-full h-9 px-3 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold outline-none focus:border-[#16A34A]"
+                  />
+                  <span className="shrink-0 text-[11px] font-semibold text-slate-400">.{PLATFORM_ROOT_DOMAIN}</span>
+                </div>
+                <p className="text-[9px] text-slate-400">
+                  Restaurant workspace URL. Lowercase letters, numbers and hyphens only.
+                </p>
               </div>
             </div>
           </div>
@@ -289,7 +325,7 @@ export default function RestaurantForm({ restaurant, onClose, onSaved }) {
               {!isEdit && (
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-slate-600">Trial Days</label>
-                  <input type="number" inputMode="numeric" value={form.trialDays} onChange={e => handleChange('trialDays', parseInt(e.target.value) || 15)} className="w-full h-9 px-3 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold outline-none focus:border-[#16A34A]" />
+                  <input type="number" inputMode="numeric" min="1" max="365" step="1" value={form.trialDays} onChange={e => handleChange('trialDays', sanitizeNumeric(e.target.value))} className="w-full h-9 px-3 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold outline-none focus:border-[#16A34A]" />
                 </div>
               )}
             </div>

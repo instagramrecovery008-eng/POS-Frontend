@@ -81,11 +81,15 @@ section('6. Menu form: Non-AC Price + AC Price (Restaurant mode)');
 const menu = read('features/masters/menu/pages/MenuPage.jsx');
 check(menu.includes('isAcNonAcPricingEnabled'), 'MenuPage imports the centralized mode helper');
 check(menu.includes('Non-AC Price') && menu.includes('AC Price'), 'Menu form renders Non-AC Price and AC Price labels');
-check(menu.includes('Base Price'), 'base price label reads Base Price in Restaurant mode');
+// Restaurant mode has NO Base Price field: Non-AC + AC are the only price
+// inputs, and the stored base price is derived from Non-AC.
+check(!/>Base Price/.test(menu), 'no Base Price label is rendered in Restaurant mode');
+check(/price: acNonAcPricing \? toNumber\(itemNonAcPrice\) : toNumber\(itemPrice\)/.test(menu),
+  'the base price is derived from Non-AC for the restaurant payload');
 check(menu.includes("AC and Non-AC prices are automatically applied based on the selected table's floor."), 'helper text explains automatic floor-based pricing');
 check(menu.includes("acPrice: itemAcPrice === '' ? null : toNumber(itemAcPrice)") &&
-      menu.includes("nonAcPrice: itemNonAcPrice === '' ? null : toNumber(itemNonAcPrice)"),
-  'AC and Non-AC prices are submitted (empty → null)');
+      menu.includes('nonAcPrice: toNumber(itemNonAcPrice)'),
+  'AC and Non-AC prices are submitted (blank AC → null, Non-AC always sent)');
 
 // ═══════════════════════════════════════════════
 section('7. Subcategory tabs — real subcategories only, no "No Subcategory"');

@@ -1,7 +1,9 @@
 import apiClient from './axios';
 
 export const userApi = {
-  getAll: () => apiClient.get('/users'),
+  // `params` supports the API's pagination ({ page, limit }); omitting it keeps
+  // the historical first-page call working.
+  getAll: (params) => apiClient.get('/users', params ? { params } : undefined),
   // Waiter directory for the Take Order wizard (any order-placing role may call it)
   getWaiters: () => apiClient.get('/users/waiters'),
   getById: (id) => apiClient.get(`/users/${id}`),
@@ -20,6 +22,12 @@ export const userApi = {
   getMyPermissions: () => apiClient.get('/users/me/permissions'),
   // ─── Per-staff floor assignment (many-to-many) + Takeaway grant ───
   getFloorAssignments: (id) => apiClient.get(`/users/${id}/floors`),
+  /**
+   * Every assignable staff member's floor + order-type assignment for THIS
+   * tenant, in one request. The roster used to call getFloorAssignments once
+   * per row, which turned a stale id into a wall of 404s.
+   */
+  getAllFloorAssignments: () => apiClient.get('/users/floor-assignments'),
   // `orderTypes` (optional array): ['TAKEAWAY'] grants Takeaway; [] revokes it.
   // Dine In is default for all staff and is never sent. Omitting the argument
   // leaves the existing grant untouched.

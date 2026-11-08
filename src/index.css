@@ -79,6 +79,17 @@ summary:focus-visible,
   outline-offset: 2px;
 }
 
+/* Login page uses the QWIKOUT blue + purple brand theme — keep its keyboard
+   focus ring on-brand without changing focus styling anywhere else. */
+.login-theme a:focus-visible,
+.login-theme button:focus-visible,
+.login-theme input:focus-visible,
+.login-theme select:focus-visible,
+.login-theme textarea:focus-visible,
+.login-theme summary:focus-visible {
+  outline-color: #0866E8;
+}
+
 /* Respect users who prefer reduced motion */
 @media (prefers-reduced-motion: reduce) {
   *,

@@ -134,7 +134,15 @@ const kitchenPage = read('features/kitchen/pages/KitchenPage.jsx');
 check(!kitchenPage.includes('Checkout Desk'), 'Checkout Desk button is removed from the kitchen screen');
 check(!kitchenPage.includes('setCheckoutOrderId'), 'no kitchen handler navigates to checkout/billing');
 check(!kitchenPage.includes('canHandleBilling'), 'kitchen screen no longer depends on the billing capability helper');
-check(!kitchenPage.includes('useUiStore'), 'kitchen screen has no screen/payment navigation state');
+// The screen keeps NO payment/checkout navigation state. It now reads the UI
+// store only for toasts (void/print feedback) and for routing to POS Settings
+// when no printer is configured — never for checkout/billing/payment.
+check(!/setCheckoutOrderId|setCheckoutAmountReceived|checkout/.test(kitchenPage),
+  'kitchen screen has no screen/payment navigation state');
+check(!/(billing|checkout|payment)/i.test(kitchenPage.match(/setScreen\('([^']+)'/g)?.join(' ') || ''),
+  'the only screen the kitchen navigates to is printer settings');
+check(kitchenPage.includes("setScreen('settings')"),
+  'a missing printer routes the user to POS Settings');
 check(kitchenPage.includes('Mark as'), 'Mark as Accepted remains available');
 check(kitchenPage.includes('Void Ticket'), 'Void Ticket remains available');
 
@@ -396,7 +404,7 @@ sub('Existing login page keeps its fields and gains the registration CTA');
 const loginPage = read('features/auth/pages/LoginPage.jsx');
 const loginForm = read('features/auth/components/LoginForm.jsx');
 check(loginPage.includes('Create New Account'), '“Create New Account” button present');
-check(loginPage.includes("Don't have an account?"), '“Don’t have an account?” text present');
+check(loginPage.includes('Sign in to your QWIKOUT POS workspace.'), 'QWIKOUT workspace sign-in copy present');
 check(loginPage.includes('setScreen(\'register\')'), 'CTA navigates to the registration screen');
 check(loginForm.includes('Log In'), 'existing Log In retained');
 check(loginPage.includes('resolveHomeScreen'), 'login routes applicants to the wizard and others to the POS');

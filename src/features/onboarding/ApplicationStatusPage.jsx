@@ -3,6 +3,7 @@ import { Building2, Clock, CheckCircle2, XCircle, AlertTriangle, CreditCard, Mai
 import { useAuthStore, useUiStore } from '../../store';
 import { onboardingApi } from '../../api/onboarding.api';
 import { formatINR } from './onboarding.lib';
+import BrandLogo from '../../components/common/BrandLogo';
 
 /**
  * Application status page for applicants.
@@ -135,8 +136,9 @@ export default function ApplicationStatusPage() {
       <div className="max-w-2xl mx-auto">
         {/* Header */}
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-[#16A34A]/10 rounded-full flex items-center justify-center mx-auto">
-            <Building2 className="w-8 h-8 text-[#16A34A]" />
+          <BrandLogo priority className="mx-auto mb-4 h-12 w-[164px]" />
+          <div className="w-16 h-16 bg-emerald-50 rounded-full flex items-center justify-center mx-auto">
+            <Building2 className="w-8 h-8 text-emerald-600" />
           </div>
           <h1 className="text-2xl font-extrabold text-slate-800 mt-4">Application Status</h1>
           <p className="text-sm text-slate-500 mt-1">Track your restaurant application progress</p>

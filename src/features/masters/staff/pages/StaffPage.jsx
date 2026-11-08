@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Plus, Search, X, Edit, Trash, RefreshCw, AlertTriangle, Loader2, Key, Shield, MapPin } from 'lucide-react';
 import { useUiStore, useSettingsStore, useAuthStore } from '../../../../store';
 import { userApi } from '../../../../api/user.api';
@@ -18,9 +18,13 @@ const avatarColors = [
 
 const getRandomColor = () => avatarColors[Math.floor(Math.random() * avatarColors.length)];
 
-// Module-level cache to prevent refetch on remount
+// Module-level cache to prevent refetch on remount. It is OWNED by the signed-in
+// user: reusing another session's/tenant's rows would make the roster (and the
+// per-staff lookups derived from it) reference ids that do not exist in the
+// current tenant.
 let cachedStaff = null;
 let cachedStaffFetched = 0;
+let cachedStaffOwner = null;
 const CACHE_TTL = 60000; // 1 minute
 
 // Single-flight guard: React StrictMode mounts the page twice in dev, and the
@@ -47,6 +51,7 @@ export default function StaffPage() {
   const canResetPassword = hasPermission('staff.password');
   // §5: floor/order-mode assignments only apply to table-capable businesses.
   const { settings } = useSettingsStore();
+  const currentUserId = useAuthStore((s) => s.user?.id);
   const capabilities = settings.capabilities || getBusinessCapabilities(settings.businessType);
   const showFloorAccess = capabilities.tables === true;
   // §1/§3: ONE authoritative capability-derived role list — Kitchen Staff never
@@ -59,8 +64,10 @@ export default function StaffPage() {
   // Default new-staff role: WAITER where the service workflow exists, else the
   // first capability-supported role (Manager for retail-only tenants).
   const defaultNewRole = visibleRoleOptions.includes('WAITER') ? 'WAITER' : visibleRoleOptions[0] || 'MANAGER';
-  const [staff, setStaff] = useState(cachedStaff || []);
-  const [loading, setLoading] = useState(!cachedStaff);
+  const [staff, setStaff] = useState(
+    cachedStaff && cachedStaffOwner === (useAuthStore.getState().user?.id ?? null) ? cachedStaff : []
+  );
+  const [loading, setLoading] = useState(!staff.length);
   const [error, setError] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [showModal, setShowModal] = useState(false);
@@ -84,6 +91,8 @@ export default function StaffPage() {
   // Floor names + per-staff assignments shown as chips on the roster card (Part 10)
   const [floorNames, setFloorNames] = useState({});
   const [assignedFloorsByUser, setAssignedFloorsByUser] = useState({});
+  // One error toast per mount for the (non-critical) assignment chips.
+  const floorAssignmentErrorShown = useRef(false);
   // Order-type assignment per user: null = unrestricted, [] = none selected,
   // ['TAKEAWAY'] etc. Shown as a chip on the roster card.
   const [orderTypesByUser, setOrderTypesByUser] = useState({});
@@ -114,7 +123,7 @@ export default function StaffPage() {
 
   useEffect(() => {
     const now = Date.now();
-    if (!cachedStaff || now - cachedStaffFetched > CACHE_TTL) {
+    if (!cachedStaff || cachedStaffOwner !== currentUserId || now - cachedStaffFetched > CACHE_TTL) {
       loadStaff();
     }
     loadFloorData();
@@ -126,21 +135,47 @@ export default function StaffPage() {
     setLoading(true);
     setError(null);
     try {
-      const resp = await userApi.getAll();
       // Backend envelope: { success, data: { users: [...], pagination } }
       // (see user.controller getUsers / successResponse). Accept the staff
       // list wherever it legitimately lives so a shape change can never turn
       // into an empty roster or a spurious format error.
-      const list = Array.isArray(resp?.data?.users)
-        ? resp.data.users
-        : Array.isArray(resp?.data)
-          ? resp.data
-          : Array.isArray(resp?.users)
-            ? resp.users
-            : null;
-      if (!list) {
-        throw new Error('Invalid response format from server');
+      const collect = (resp) => (
+        Array.isArray(resp?.data?.users)
+          ? resp.data.users
+          : Array.isArray(resp?.data)
+            ? resp.data
+            : Array.isArray(resp?.users)
+              ? resp.users
+              : null
+      );
+      // GET /users PAGINATES (10 per page by default). The roster is the full
+      // staff list, so a single first-page call silently hid every staff member
+      // past the tenth — the dashboard could report 22 active staff while the
+      // roster looked truncated/empty. Read every page instead.
+      const PAGE_SIZE = 100;
+      const firstResp = await userApi.getAll({ page: 1, limit: PAGE_SIZE });
+      let list = collect(firstResp);
+      if (!list) throw new Error('Invalid response format from server');
+      const totalPages = Number(firstResp?.data?.pagination?.totalPages) || 1;
+      if (totalPages > 1) {
+        const rest = await Promise.all(
+          Array.from({ length: totalPages - 1 }, (_, i) =>
+            userApi.getAll({ page: i + 2, limit: PAGE_SIZE }).catch(() => null)
+          )
+        );
+        rest.forEach((resp) => {
+          const rows = collect(resp);
+          if (rows) list = list.concat(rows);
+        });
       }
+      // A page fetched twice (data shifted between requests) must not duplicate
+      // a staff row.
+      const seen = new Set();
+      list = list.filter((u) => {
+        if (seen.has(u.id)) return false;
+        seen.add(u.id);
+        return true;
+      });
       const mapped = list.map((u) => ({
         id: `staff-${u.id}`,
         firstName: u.name?.split(' ')[0] || u.name || 'User',
@@ -156,6 +191,7 @@ export default function StaffPage() {
       }));
       setStaff(mapped);
       cachedStaff = mapped;
+      cachedStaffOwner = currentUserId ?? null;
       cachedStaffFetched = Date.now();
       // Floor chips depend on the loaded roster (assignments are fetched per
       // assignable staff member), so refresh them once the list is available.
@@ -190,28 +226,38 @@ export default function StaffPage() {
     } catch (e) {
       // Non-critical: roster still renders without floor chips
     }
+    // ONE tenant-scoped request for every roster row. The previous version fired
+    // GET /users/:id/floors per staff member, so a roster restored from a stale
+    // cache produced 404s for ids that no longer exist (and N requests per
+    // load). A failure here is REPORTED, never rendered as "nobody has floors".
     try {
-      const list = cachedStaff || [];
-      const assignable = list.filter((m) => ASSIGNABLE_BACKEND_ROLES.includes(m.backendRole));
-      if (assignable.length === 0) return;
-      const results = await Promise.all(
-        assignable.map(async (m) => {
-          try {
-            const resp = await userApi.getFloorAssignments(m.backendId);
-            return [
-              m.backendId,
-              resp?.data?.floorIds || resp?.floorIds || [],
-              Array.isArray(resp?.data?.assignedOrderTypes) ? resp.data.assignedOrderTypes : [],
-            ];
-          } catch (_) {
-            return [m.backendId, [], []];
-          }
-        })
-      );
-      setAssignedFloorsByUser(Object.fromEntries(results.map(([id, floors]) => [id, floors])));
-      setOrderTypesByUser(Object.fromEntries(results.map(([id, , ot]) => [id, ot])));
+      const resp = await userApi.getAllFloorAssignments();
+      const rows = Array.isArray(resp?.data?.assignments)
+        ? resp.data.assignments
+        : Array.isArray(resp?.assignments)
+          ? resp.assignments
+          : null;
+      if (!rows) throw new Error('Invalid response format from server');
+      const floorsByUser = {};
+      const typesByUser = {};
+      for (const row of rows) {
+        const id = row?.userId;
+        if (id == null) continue;
+        floorsByUser[id] = Array.isArray(row.floorIds) ? row.floorIds : [];
+        typesByUser[id] = Array.isArray(row.assignedOrderTypes) ? row.assignedOrderTypes : [];
+      }
+      setAssignedFloorsByUser(floorsByUser);
+      setOrderTypesByUser(typesByUser);
     } catch (e) {
-      // Non-critical: roster still renders without chips
+      // Chips are non-critical, but the failure must be visible exactly once
+      // instead of silently looking like "no assignments configured".
+      setAssignedFloorsByUser({});
+      setOrderTypesByUser({});
+      console.warn('Failed to load staff floor assignments:', e?.message || e);
+      if (!floorAssignmentErrorShown.current) {
+        floorAssignmentErrorShown.current = true;
+        addToast('Staff access assignments could not be loaded.', 'error');
+      }
     }
   };
 

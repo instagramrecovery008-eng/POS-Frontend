@@ -18,8 +18,8 @@ const config: CapacitorConfig = {
   // Unique Android application ID. Kept as-is: it is a technical identifier
   // (Play Store package), not user-facing branding.
   appId: 'com.restaurantpos.app',
-  // Product name — must match the platform branding ("KlarGo POS").
-  appName: 'KlarGo POS',
+  // Product name — must match the platform branding ("QWIKOUT POS").
+  appName: 'QWIKOUT POS',
   // The existing Vite build output — shared verbatim with the web deployment.
   webDir: 'dist',
 };

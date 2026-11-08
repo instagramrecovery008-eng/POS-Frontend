@@ -297,7 +297,7 @@ for (const vp of VIEWPORTS) {
       orderTypeStep: has('Choose Order Type'),
       floorStep: has('Select Floor / Area'),
       tableStep: has('Select Table'),
-      menuStep: !!(document.querySelector('input[placeholder="Search dishes, categories..."]') || has('No menu items found')),
+      menuStep: !!(document.querySelector('input[aria-label="Search the whole menu"]') || has('No menu items found')),
       overlayCards: overlays.length,
       // NOTE: a regex escape written inside this evaluated template literal
       // would collapse (\s -> s), so plain string matching is used here.
@@ -388,7 +388,7 @@ for (const vp of VIEWPORTS) {
   await sleep(2200);
   const afterClose = await evaluate(`(() => ({
     onBoard: document.body.innerText.includes('Restaurant Floors & Tables'),
-    wizardGone: !document.querySelector('input[placeholder="Search dishes, categories..."]'),
+    wizardGone: !document.querySelector('input[aria-label="Search the whole menu"]'),
     bodyUnlocked: document.body.style.overflow !== 'hidden' && document.documentElement.style.overflow !== 'hidden',
   }))()`);
   check(afterClose.wizardGone && afterClose.onBoard, 'leaving the order returns to the Floors & Tables board');

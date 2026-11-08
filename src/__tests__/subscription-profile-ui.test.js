@@ -88,7 +88,10 @@ const menuApiSrc = read('api/menu.api.js');
 check(menuApiSrc.includes("getAll: (params)"), 'menu API exposes the single filtered list endpoint');
 check(wizard.includes('menuApi.getAll()'), 'POS wizard reads items from the server-filtered menu endpoint');
 check(posWs.includes('menuApi.getAll()'), 'Basic POS reads items from the server-filtered menu endpoint');
-check(activeOrders.includes('setShowTakeOrderWizard(true)'), 'Active Orders add-item flow reuses the filtered TakeOrderWizard');
+check(activeOrders.includes('setScreen(resolveAddItemScreen(settings))'),
+  'Active Orders Add Item opens the normal POS Ordering screen (same filtered wizard, page mode)');
+check(!activeOrders.includes('setShowTakeOrderWizard(true)'),
+  'Add Item no longer opens a separate modal wizard');
 check(wizard.includes('dietaryMenuWhere'), 'POS documents that dietary filtering is enforced server-side');
 
 const menu = [

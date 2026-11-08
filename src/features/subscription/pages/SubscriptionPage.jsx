@@ -215,7 +215,7 @@ export default function SubscriptionPage() {
         const rzp = new window.Razorpay({
           key: keyId,
           amount: Math.round(Number(amount) * 100),
-          currency: 'INR',           name: 'KlarGo POS',
+          currency: 'INR',           name: 'QWIKOUT POS',
           description: `${ACTION_LABEL[confirmPlan.action]} — ${plan?.name || 'Plan'}`,
           order_id: razorpayOrderId,
           handler: async (response) => {

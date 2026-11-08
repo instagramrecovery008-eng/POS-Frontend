@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { settingApi } from '../api/setting.api';
+import { BRAND } from '../config/company';
 import { getBusinessCapabilities, isBasicPosFoodBusiness } from '../utils/businessCapabilities';
 
 // ── Keys that control module visibility in the sidebar & route guard ──────
@@ -128,19 +129,19 @@ const defaultSettings = {
   businessType: 'RESTAURANT',
   capabilities: getBusinessCapabilities('RESTAURANT'),
   branding: {
-    // Bundled KlarGo logo (frontend/public). Shown until an admin uploads a
-    // custom restaurant logo via Settings, which overrides these on fetch.
-    logo: '/klargo-logo.png',
-    restaurantName: 'KlarGo POS',
+    // Bundled QWIKOUT POS logo (frontend/public). Shown until an admin uploads
+    // a custom restaurant logo via Settings, which overrides these on fetch.
+    logo: BRAND.logo,
+    restaurantName: BRAND.name,
     ownerName: '',
-    loginLogo: '/klargo-logo.png',
-    sidebarLogo: '/klargo-icon.png',
+    loginLogo: BRAND.logo,
+    sidebarLogo: BRAND.logo,
     // The logo the TENANT actually uploaded (empty until one is configured).
     // Surfaces such as the sidebar use it so a restaurant without a logo gets
     // its own initials instead of the generic platform mark.
     customLogo: '',
-    receiptLogo: '/klargo-logo.png',
-    invoiceLogo: '/klargo-logo.png',
+    receiptLogo: BRAND.logo,
+    invoiceLogo: BRAND.logo,
   },
   // POS Configuration
   language: 'English',
@@ -288,6 +289,16 @@ const useSettingsStore = create((set, get) => ({
   // load. The tenant toggle (settings.barcodeScannerEnabled) is separate —
   // scanners are active only when BOTH are true.
   barcodeScannerAvailable: false,
+  // Business-TYPE gate for the scanner (server-resolved capability flag, never
+  // client-supplied): only PRODUCT-catalogue verticals (retail) expose a
+  // barcoded catalogue, so every food/restaurant vertical resolves to false.
+  // null = not loaded yet → the UI shows "checking" instead of offering a
+  // toggle the tenant may not be allowed to use.
+  barcodeScannerSupported: null,
+  // True when the tenant has at least one printer in POS Settings. The KOT
+  // print flow warns + routes to printer settings instead of reporting a
+  // physical print that never happened.
+  printerConfigured: true,
 
   fetchSettings: async () => {
     set({ loading: true, error: null });
@@ -297,8 +308,16 @@ const useSettingsStore = create((set, get) => ({
         const s = resp.setting;
         // Also load printers if the API returns them
         const printersFromBackend = resp.printers || [];
-        
+
         set(() => {
+          // Barcode scanner: business-type capability. The server resolves it
+          // from the CANONICAL persisted businessType; when it is absent the
+          // local mirror decides from the same saved businessType (never a
+          // default / display name). Unknown → false (never offer a scanner we
+          // cannot confirm), so a restaurant can no longer show the toggle.
+          const barcodeSupported = s.capabilities
+            ? s.capabilities.barcode === true
+            : getBusinessCapabilities(s.businessType).barcode === true;
           // ── Restore the full persisted UI snapshot from the DB first ──
           // (taxes, screen/panel toggles, display modes, formats, security, etc.)
           // Explicit DB columns below are then applied ON TOP so they stay canonical.
@@ -451,13 +470,23 @@ const useSettingsStore = create((set, get) => ({
             }
           }
 
-          return { settings: newSettings, loading: false, lastFetched: Date.now() };
+          return {
+            settings: newSettings,
+            loading: false,
+            lastFetched: Date.now(),
+            barcodeScannerSupported: barcodeSupported,
+            // Server-reported printer configuration (false only when the API
+            // explicitly says there is no printer — a missing field keeps the
+            // permissive default so older backends never block printing).
+            printerConfigured: resp.printerConfigured !== false,
+          };
         });
       } else {
         // No settings row for this restaurant yet — reset to a clean baseline
         // (defaults + this terminal's UI cache) so the previous restaurant's
-        // session state can never bleed into the new one.
-        set({ settings: getInitialSettings(), loading: false, lastFetched: Date.now() });
+        // session state can never bleed into the new one. The scanner gate stays
+        // UNKNOWN (null) because no business type was resolved.
+        set({ settings: getInitialSettings(), loading: false, lastFetched: Date.now(), printerConfigured: true, barcodeScannerSupported: null });
       }
     } catch (e) {
       set({ error: e.message || 'Failed to load settings', loading: false });
@@ -519,7 +548,7 @@ const useSettingsStore = create((set, get) => ({
         website: s.website,
         address: s.address,
         // Persist ONLY a logo this tenant actually uploaded. The bundled
-        // KlarGo assets are display defaults, not tenant data — writing them
+        // QWIKOUT assets are display defaults, not tenant data — writing them
         // into the tenant's logo column made every restaurant look like it had
         // "uploaded" the platform logo, so the sidebar could never fall back to
         // the restaurant's own initials.

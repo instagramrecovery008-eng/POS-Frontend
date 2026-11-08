@@ -10,10 +10,15 @@ import orderApi from '../../../api/order.api';
 import { kotApi } from '../../../api/kot.api';
 import { tableApi } from '../../../api/table.api';
 import { useSocketEvent } from '../../../hooks/useSocket';
-import { openBillPrintPreview, openKotPrintPreview } from '../../../services/printService';
+import { openBillPrintPreview, openKotPrintWindow, closeKotPrintWindow } from '../../../services/printService';
+import { dispatchKotPrint } from '../../../services/kotPrintService';
 import API_BASE_URL from '../../../config/apiConfig';
 import { canHandleBilling } from '../../../utils/permissions';
-import { isBasicPosFoodBusiness } from '../../../utils/businessCapabilities';
+import { isBasicPosFoodBusiness, getBusinessCapabilities } from '../../../utils/businessCapabilities';
+import { resolveAddItemScreen } from '../../../utils/orderFlow';
+import {
+  activeQuantity, activeOrderItems, activeItemCount, voidedLineCount, isFullyVoidedOrder
+} from '../../../utils/orderItems';
 
 // ── Color status mapping ──
 const STATUS_STYLES = {
@@ -100,9 +105,10 @@ function CancelReasonModal({ isOpen, orderNumber, onBack, onConfirm, isLoading }
 
 // ── Main Component ──
 export default function ActiveOrdersPage() {
-  const { setCheckoutOrderId, setActiveOrderTakingId, setShowTakeOrderWizard, addToast, ordersActiveTab, setOrdersActiveTab, refreshTrigger, incrementRefreshTrigger } = useUiStore();
+  const { setCheckoutOrderId, setActiveOrderTakingId, setShowTakeOrderWizard, clearPendingTable, addToast, ordersActiveTab, setOrdersActiveTab, refreshTrigger, incrementRefreshTrigger, setScreen } = useUiStore();
   const { orders, setOrders } = useCartStore();
   const { settings } = useSettingsStore();
+  const printerConfigured = useSettingsStore((s) => s.printerConfigured) !== false;
   const currency = settings?.currencySymbol || '₹';
   const { user } = useAuthStore();
   const isServiceStaff = (user?.role || '').toUpperCase() === 'WAITER';
@@ -110,6 +116,10 @@ export default function ActiveOrdersPage() {
   // floor identifiers on a COUNTER ORDER. Restaurants keep the existing
   // prominent TABLE identifier untouched.
   const isCounterOriented = isBasicPosFoodBusiness(settings?.businessType);
+  // KOTs are a BUSINESS CAPABILITY, not the "Enable Kitchen (KOT)" module
+  // toggle. That toggle only hides the Kitchen Tickets screen — order → KOT →
+  // print must keep working (and stay retryable HERE) when it is off.
+  const kotCapable = (settings?.capabilities || getBusinessCapabilities(settings?.businessType)).kot === true;
   // Bill checkout / payment actions are restricted to billing-capable roles
   // (ADMIN/MANAGER/CASHIER). WAITER and KITCHEN must never see them.
   const canBill = canHandleBilling(user?.role);
@@ -132,6 +142,9 @@ export default function ActiveOrdersPage() {
 
   // KOT button loading per order (double-click protection)
   const [kotLoading, setKotLoading] = useState(null);
+  // Retry a KOT whose print job reached FAILED/PENDING — the accessible retry
+  // surface when the Kitchen Tickets screen is hidden.
+  const [kotRetryLoading, setKotRetryLoading] = useState(null);
 
   // ── Preview state (Part: Active Order Preview) ──
   // previewOrder = the order currently shown in the preview modal; fetched via
@@ -174,17 +187,25 @@ export default function ActiveOrdersPage() {
   };
 
   // ── Fetch Active Orders ──
+  // A background poll refreshes DATA ONLY. It never navigates, never reloads
+  // the page and never resets the active tab / search / preview: a slower
+  // response is discarded so an older poll can never overwrite newer data.
+  const activeRequestSeqRef = useRef(0);
   const fetchActiveOrders = useCallback(async () => {
+    const seq = ++activeRequestSeqRef.current;
     try {
       const res = await orderApi.getActive();
+      if (seq !== activeRequestSeqRef.current) return; // stale response
       const orderList = extractOrders(res);
       setOrders(orderList);
       setError(null);
     } catch (err) {
+      if (seq !== activeRequestSeqRef.current) return; // stale failure
       console.error('Failed to fetch active orders:', err);
-      setError('Unable to load orders. Retrying...');
+      // Non-blocking: the current screen, tab and selection stay visible.
+      setError('Unable to refresh orders. Showing the last loaded data.');
     } finally {
-      setLoading(false);
+      if (seq === activeRequestSeqRef.current) setLoading(false);
     }
   }, [setOrders]);
 
@@ -240,8 +261,12 @@ export default function ActiveOrdersPage() {
   // ticket with a live KOT, so it stays visible here instead of silently
   // disappearing. It is a read-only status legacy: nothing on this screen can
   // set HOLD, and no KOT is created by rendering it.
+  // An order whose ENTIRE kitchen work was voided is not active work either —
+  // but its bill/payment history is untouched (it still appears under
+  // Completed/Cancelled tabs; nothing is deleted).
   const activeOrders = (orders || []).filter(o => {
     if (o.status === 'COMPLETED' || o.status === 'CANCELLED') return false;
+    if (isFullyVoidedOrder(o)) return false;
     const q = searchQuery.toLowerCase();
     const matchesSearch = !q || (o.orderNo || '').toLowerCase().includes(q) ||
       (o.table?.tableNo || '').toString().toLowerCase().includes(q) ||
@@ -283,8 +308,14 @@ export default function ActiveOrdersPage() {
       addToast('Adding items is disabled in POS Settings', 'warning');
       return;
     }
+    // Add Item opens the NORMAL POS Ordering screen (same page-mode wizard as
+    // the sidebar's POS Ordering entry), NOT a modal overlay. The wizard reads
+    // the edit handoff, loads this order's items read-only and adds only the
+    // new lines to the SAME order — it never creates a second order.
+    clearPendingTable();
+    setShowTakeOrderWizard(false);
     setActiveOrderTakingId(`ord-${order.id}`);
-    setShowTakeOrderWizard(true);
+    setScreen(resolveAddItemScreen(settings));
   };
 
   const handlePrintKOT = async (order) => {
@@ -293,11 +324,14 @@ export default function ActiveOrdersPage() {
       addToast('This order has been cancelled and cannot be printed.', 'error');
       return;
     }
-    if (settings.enableKitchen === false) {
-      addToast('Kitchen module is disabled in POS Settings', 'warning');
+    if (!kotCapable) {
+      addToast('This business type has no kitchen ticket workflow.', 'warning');
       return;
     }
     setKotLoading(order.id);
+    // Open the print window in the click gesture: the delta KOT number only
+    // exists after the API call, and a popup opened after an await is blocked.
+    const kotPrintWindow = openKotPrintWindow();
     try {
       // Create a DELTA KOT — only items not yet sent to kitchen.
       // The backend calculates quantity − sentQuantity and returns only the delta.
@@ -307,6 +341,7 @@ export default function ActiveOrdersPage() {
 
       // If no new items, backend returns created=false — this is normal, not an error
       if (kotData?.created === false || !kotData?.kotNo) {
+        closeKotPrintWindow(kotPrintWindow);
         addToast('No new items to send to kitchen.', 'info');
         return;
       }
@@ -316,28 +351,117 @@ export default function ActiveOrdersPage() {
       // Never fall back to order.orderItems — that would print all items, defeating incremental KOT.
       const items = kotData?.kotItems || [];
 
-      openKotPrintPreview({
-        restaurantName: settings?.branding?.restaurantName || '',
-        kotNo: kotNo,
-        orderNo: order.orderNo || String(order.id),
-        tableNo: order.table?.tableNo || '',
-        orderType: order.orderType || 'DINE_IN',
-        waiterName: order.user?.name || '',
-        customerName: order.customer?.name || '',
-        customerPhone: order.customer?.phone || '',
-        guestCount: order.guestCount || 1,
-        notes: order.notes || '',
-        items: items,
-        footer: settings?.receiptFooterMessage || 'Thank You!',
-        date: new Date()
+      // ── Dispatch the print job (kitchen printing) ──
+      // The shared service opens the existing print preview and reports
+      // DISPATCHED/FAILED back to the API, so the job survives a refresh and
+      // can be retried. A missing printer is surfaced as a visible warning
+      // (with a route to printer settings) instead of a fake "printed" toast.
+      const printResult = await dispatchKotPrint({
+        kot: kotData.kot || kotData,
+        printerConfigured,
+        printWindow: kotPrintWindow,
+        printData: {
+          restaurantName: settings?.branding?.restaurantName || '',
+          kotNo: kotNo,
+          orderNo: order.orderNo || String(order.id),
+          tableNo: order.table?.tableNo || '',
+          orderType: order.orderType || 'DINE_IN',
+          waiterName: order.user?.name || '',
+          customerName: order.customer?.name || '',
+          customerPhone: order.customer?.phone || '',
+          guestCount: order.guestCount || 1,
+          notes: order.notes || '',
+          items: items,
+          footer: settings?.receiptFooterMessage || 'Thank You!',
+          date: new Date()
+        }
       });
-      addToast(`KOT ${kotNo} created for Order ${order.orderNo || order.id}`, 'success');
+
+      if (printResult.dispatched && printResult.needsConfiguration) {
+        addToast(`KOT ${kotNo} sent to the system printer. ${printResult.warning || ''}`.trim(), 'warning');
+      } else if (!printResult.dispatched && printResult.needsConfiguration) {
+        addToast(`KOT ${kotNo} created. ${printResult.error}`, 'warning');
+        setScreen('settings');
+      } else if (printResult.dispatched) {
+        addToast(`KOT ${kotNo} sent to the printer for Order ${order.orderNo || order.id}`, 'success');
+      } else {
+        addToast(`KOT ${kotNo} created but NOT printed: ${printResult.error}`, 'error');
+      }
+      if (!printResult.dispatched) closeKotPrintWindow(kotPrintWindow);
       incrementRefreshTrigger();
     } catch (e) {
+      closeKotPrintWindow(kotPrintWindow);
       const msg = e?.message || 'Unable to connect to the printer. Please check your printer settings and try again.';
       addToast(msg, 'error');
     } finally {
       setKotLoading(null);
+    }
+  };
+
+  // ── Retry Print for an EXISTING kitchen ticket ─────────────────────────────
+  // The KOT was created with the order; only its dispatch failed (popup
+  // blocked, printer unavailable). Retrying reprints THAT ticket — no new KOT
+  // and no second order are created. This is the retry surface when the
+  // Kitchen Tickets screen is disabled.
+  const handleRetryKotPrint = async (order) => {
+    if (kotRetryLoading) return;
+    if (isOrderCancelled(order)) {
+      addToast('This order has been cancelled and cannot be printed.', 'error');
+      return;
+    }
+    if (!kotCapable) {
+      addToast('This business type has no kitchen ticket workflow.', 'warning');
+      return;
+    }
+    setKotRetryLoading(order.id);
+    // Valid user gesture — the browser only allows the print window now.
+    const kotPrintWindow = openKotPrintWindow();
+    try {
+      const resp = await kotApi.reprintByOrder(order.id);
+      const kot = resp?.data || resp;
+      if (!kot?.id) {
+        throw new Error('The kitchen ticket could not be loaded. Refresh and retry.');
+      }
+      const result = await dispatchKotPrint({
+        kot,
+        manual: true,
+        printerConfigured,
+        printWindow: kotPrintWindow,
+        printData: {
+          restaurantName: settings?.branding?.restaurantName || '',
+          kotNo: kot.kotNo || '',
+          orderNo: order.orderNo || String(order.id),
+          tableNo: order.table?.tableNo || '',
+          orderType: order.orderType || 'DINE_IN',
+          waiterName: order.user?.name || '',
+          customerName: order.customer?.name || '',
+          customerPhone: order.customer?.phone || '',
+          guestCount: order.guestCount || 1,
+          notes: order.notes || '',
+          items: (kot.kotItems || order.orderItems || []).map((it) => ({
+            name: it.menuItem?.name || `Item #${it.menuItemId}`,
+            quantity: it.quantity || 1,
+            notes: it.notes || '',
+            dietaryType: it.menuItem?.dietaryType || null,
+          })),
+          footer: settings?.receiptFooterMessage || 'Thank You!',
+          date: new Date(),
+        },
+      });
+      if (!result.dispatched) {
+        closeKotPrintWindow(kotPrintWindow);
+        addToast(`KOT ${kot.kotNo} still not printed: ${result.error || 'print unavailable'}`, 'error');
+      } else if (result.needsConfiguration) {
+        addToast(`KOT ${kot.kotNo} sent to the system printer. ${result.warning || ''}`.trim(), 'warning');
+      } else {
+        addToast(`KOT ${kot.kotNo} sent to the printer.`, 'success');
+      }
+      incrementRefreshTrigger();
+    } catch (e) {
+      closeKotPrintWindow(kotPrintWindow);
+      addToast(e?.message || 'Retry failed. Check printer settings and try again.', 'error');
+    } finally {
+      setKotRetryLoading(null);
     }
   };
 
@@ -527,11 +651,16 @@ export default function ActiveOrdersPage() {
 
   // ── Helpers ──
   const getStatusStyle = (status) => STATUS_STYLES[status] || STATUS_STYLES.PENDING;
-  const getItemCount = (order) => (order.orderItems || []).reduce((s, i) => s + (i.quantity || 0), 0);
+  // Item counts and fallback totals use the ACTIVE (non-voided) remainder only:
+  // a voided KOT's items must never show as pending kitchen work, while a
+  // partially voided line keeps its remaining units on the card.
+  const getItemCount = (order) => activeItemCount(order?.orderItems || []);
   const getOrderTotal = (order) => {
+    // Stored order totals stay authoritative (payment history is preserved).
     if (order.grandTotal != null) return order.grandTotal;
     if (order.subtotal != null) return order.subtotal;
-    return (order.orderItems || []).reduce((s, i) => s + Number(i.total || i.price || 0), 0);
+    return activeOrderItems(order.orderItems || [])
+      .reduce((s, i) => s + Number(i.total || i.price || 0) * (activeQuantity(i) / Math.max(1, Number(i.quantity || 1))), 0);
   };
 
   const cancellingOrder = (orders || []).find(o => o.id === cancellingOrderId);
@@ -679,6 +808,28 @@ export default function ActiveOrdersPage() {
           <span className="font-mono text-sm font-black text-[#16A34A]">{currency}{Number(total).toLocaleString('en-IN')}</span>
         </div>
 
+        {/* REAL KOT status — driven by the ticket the backend created, never by
+            Kitchen screen visibility. Only a genuinely unprinted/failed job is
+            labelled; a valid ticket is never shown as "No KOT". */}
+        {kotCapable && order.kot?.[0] && ['FAILED', 'PENDING'].includes(order.kot[0].printJobStatus) && (
+          <div className="flex flex-wrap items-center gap-1.5 mb-2 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5">
+            <span className="text-[9px] font-extrabold uppercase tracking-wider text-amber-800">
+              KOT {order.kot[0].kotNo} · {order.kot[0].printJobStatus === 'FAILED' ? 'Print failed' : 'Not printed'}
+            </span>
+            {order.kot[0].printError && (
+              <span className="min-w-0 truncate text-[9px] font-semibold text-red-600">{order.kot[0].printError}</span>
+            )}
+            <button
+              onClick={() => handleRetryKotPrint(order)}
+              disabled={kotRetryLoading === order.id}
+              className="ml-auto inline-flex h-7 shrink-0 items-center gap-1 rounded-lg border border-amber-300 bg-white px-2 text-[9px] font-extrabold uppercase tracking-wider text-amber-800 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {kotRetryLoading === order.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Printer className="w-3 h-3" />}
+              Retry print
+            </button>
+          </div>
+        )}
+
         {/* Simplified Action Buttons: Preview, Add Item, Print KOT (if enabled), Bill (if enabled), Transfer (if enabled), Cancel */}
         {/* h-10 min touch targets (≈40px) — no hover-only actions */}
         <div className={`grid ${isServiceStaff ? 'grid-cols-2' : 'grid-cols-3'} gap-1.5`}>
@@ -690,7 +841,7 @@ export default function ActiveOrdersPage() {
             className="h-10 bg-[#16A34A] hover:bg-[#15803D] text-white font-bold rounded-lg text-[9px] uppercase tracking-wider flex items-center justify-center gap-1 transition-all shadow-xs cursor-pointer">
             <Plus className="w-3 h-3" /> Add Item
           </button>
-          {settings.enableKitchen !== false && (
+          {kotCapable && (
             <button onClick={() => handlePrintKOT(order)} disabled={kotLoading === order.id}
               className="h-10 bg-white border border-slate-200 hover:bg-slate-50 text-[#111827] font-bold rounded-lg text-[9px] uppercase tracking-wider flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
               {kotLoading === order.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Printer className="w-3 h-3" />} KOT
@@ -1094,20 +1245,44 @@ Items: ${itemsCount}`, 'info');
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {previewOrder.orderItems.map((item, idx) => (
-                    <div key={item.id || idx} className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-xs font-bold text-slate-700 truncate">{item.menuItem?.name || 'Item'}</p>
-                        {item.notes && <p className="text-[10px] text-slate-400">{item.notes}</p>}
+                  {previewOrder.orderItems.map((item, idx) => {
+                    const active = activeQuantity(item);
+                    const fullyVoided = active === 0 && Number(item.quantity) > 0;
+                    const partial = active > 0 && Number(item.voidedQuantity || 0) > 0;
+                    return (
+                      <div key={item.id || idx} className={`flex items-start justify-between gap-3 ${fullyVoided ? 'opacity-50' : ''}`}>
+                        <div className="min-w-0">
+                          <p className={`text-xs font-bold truncate ${fullyVoided ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
+                            {item.menuItem?.name || 'Item'}
+                          </p>
+                          {fullyVoided && (
+                            <span className="text-[9px] font-extrabold uppercase tracking-wider text-red-600 bg-red-50 border border-red-200 rounded px-1.5 py-0.5">
+                              Voided
+                            </span>
+                          )}
+                          {partial && (
+                            <span className="text-[9px] font-extrabold uppercase tracking-wider text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">
+                              {item.voidedQuantity} voided
+                            </span>
+                          )}
+                          {item.notes && <p className="text-[10px] text-slate-400">{item.notes}</p>}
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className={`text-xs font-bold ${fullyVoided ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
+                            {fullyVoided ? `${item.quantity}` : `${active}`} × ₹{Number(item.price).toFixed(2)}
+                            {partial && <span className="text-[10px] text-slate-400"> (of {item.quantity})</span>}
+                          </p>
+                          <p className="text-[10px] text-slate-500">₹{Number(item.total).toFixed(2)}</p>
+                        </div>
                       </div>
-                      <div className="text-right shrink-0">
-                        <p className="text-xs font-bold text-slate-700">
-                          {item.quantity} × ₹{Number(item.price).toFixed(2)}
-                        </p>
-                        <p className="text-[10px] text-slate-500">₹{Number(item.total).toFixed(2)}</p>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
+                  {voidedLineCount(previewOrder.orderItems) > 0 && (
+                    <p className="text-[10px] text-slate-500 font-semibold bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2">
+                      Voided lines are kept for the order's history. Totals below are the stored
+                      order values and are never changed by voiding a kitchen ticket.
+                    </p>
+                  )}
                 </div>
               )}
             </div>

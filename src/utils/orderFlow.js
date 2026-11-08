@@ -2,7 +2,7 @@
  * Shared order-flow resolution helpers (Parts 7/8/9).
  *
  * ONE rule set for both order-entry surfaces:
- *   - Full KlarGo POS           (TakeOrderWizard)
+ *   - Full QWIKOUT POS          (TakeOrderWizard)
  *   - Basic POS / Quick Billing (PosWorkspace)
  *
  * The frontend helpers only shape the UI flow (which steps to show, what to
@@ -84,6 +84,23 @@ export function resolveAvailableOrderTypes({ role, assignedOrderTypes, grantLoad
 export function resolveOrderEntryScreen(settings) {
   const mode = String(settings?.businessMode || '').toLowerCase();
   return mode === 'restaurant' ? 'new_order' : null;
+}
+
+/**
+ * Where "Add Item" on Active Orders opens.
+ *
+ * The POS Ordering screen (`new_order`) renders the SAME TakeOrderWizard in
+ * page mode (see NewOrderPage). That wizard already owns the Add-Items session:
+ * it loads the existing order, shows its items read-only, adds only the new
+ * cart lines (`orderApi.addItem`) and issues a DELTA KOT for the same order id.
+ * Opening that screen — instead of the old modal overlay — is what makes
+ * Add Item behave exactly like normal POS Ordering in every business mode.
+ *
+ * The AppShell route guard allows `new_order` for a handoff session even in a
+ * counter/basic-POS mode; without the handoff the mode rule is unchanged.
+ */
+export function resolveAddItemScreen() {
+  return 'new_order';
 }
 
 /**

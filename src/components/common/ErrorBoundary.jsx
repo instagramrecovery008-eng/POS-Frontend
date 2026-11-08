@@ -43,6 +43,11 @@ export default class ErrorBoundary extends React.Component {
         return this.props.fallback;
       }
 
+      // Development: show the REAL error (message + component stack) so a crash
+      // is diagnosable instead of a wall of "try again". Production keeps the
+      // actionable, non-technical copy below.
+      const showDetails = this.props.showError ?? import.meta.env?.DEV === true;
+
       return (
         <div className="flex items-center justify-center p-8 min-h-[200px]">
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 max-w-md w-full text-center space-y-4">
@@ -55,13 +60,14 @@ export default class ErrorBoundary extends React.Component {
                 An unexpected error occurred. Please try again.
               </p>
             </div>
-            {this.props.showError && (
-              <details className="text-left">
+            {showDetails && (
+              <details className="text-left" open={import.meta.env?.DEV === true}>
                 <summary className="text-[10px] font-bold text-slate-400 cursor-pointer hover:text-slate-600">
                   Error details
                 </summary>
                 <pre className="mt-2 p-2 bg-slate-50 rounded-lg text-[9px] text-red-600 font-mono overflow-auto max-h-32">
                   {this.state.error?.toString()}
+                  {this.state.errorInfo?.componentStack ? '\n' + this.state.errorInfo.componentStack : ''}
                 </pre>
               </details>
             )}

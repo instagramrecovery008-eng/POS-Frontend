@@ -206,8 +206,10 @@ check(/handlePrintKot/.test(wizard), 'Print KOT is preserved');
 check(/Cancel Order/.test(wizard), 'Cancel Order is preserved');
 check(/clearPendingTable\(\);\s*await loadInitialData\(\);/.test(wizard),
   'a printed KOT resets the wizard (clear cart + reload) so a second click cannot re-order');
-check(/settings\.enableKitchen === false &&/.test(wizard) && /const handlePlaceOrder = async \(\) => \{/.test(wizard),
-  'the kitchen-OFF configuration can still create an order (Place Order, no KOT)');
+check(/\{!kotCapable && \(/.test(wizard) && /const handlePlaceOrder = async \(\) => \{/.test(wizard),
+  'a business WITHOUT the kitchen capability can still create an order (Place Order, no KOT)');
+check(!/settings\.enableKitchen === false &&[\s\S]{0,40}handlePlaceOrder/.test(wizard),
+  'the Kitchen SCREEN toggle never decides whether the KOT workflow applies');
 check(!/handlePlaceOrder[\s\S]{0,2200}setCheckoutOrderId/.test(wizard),
   'no create action opens the payment overlay — payment stays with the cashier');
 check(/clearPendingTable\(\);\s*setActiveOrderTakingId\(null\);\s*setShowTakeOrderWizard\(false\);/.test(wizard),

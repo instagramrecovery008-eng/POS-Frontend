@@ -19,31 +19,7 @@ import {
 } from '../../../../utils/menuHierarchy';
 import { resolveItemDefaults } from '../../../../utils/menuItemDefaults';
 
-// ── Numeric input sanitizer ──
-// One reusable rule for every numeric field (Price, Prep Time, Stock Quantity,
-// Tax %, Display Order). Returns a STRING so an empty field stays empty and the
-// input text always matches the state — the classic fix for the leading-zero
-// "0219" artifact in controlled number inputs (a numeric value would otherwise
-// collapse empty → 0 and let the raw text linger in the DOM). The API payload
-// converts the sanitized string with toNumber() below.
-const sanitizeNumeric = (raw) => {
-  if (raw == null) return '';
-  let value = String(raw).trim();
-  if (value === '') return '';
-  // Strip unnecessary leading zeros: "00219" → "219", "0005" → "5",
-  // "0180.50" → "180.50", "0" → "0", "0.5" stays "0.5".
-  if (/^0+\d/.test(value)) value = value.replace(/^0+/, '');
-  // Never drop the integer zero before a decimal point: ".5" → "0.5".
-  if (value.startsWith('.')) value = `0${value}`;
-  return value;
-};
-
-// Convert a sanitized field value to the actual numeric value sent to the API.
-const toNumber = (value) => {
-  if (value === '' || value == null) return 0;
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
-};
+import { sanitizeNumeric, toNumber } from '../../../../utils/numericHelpers';
 
 const CATEGORY_COLORS = [
   '#16A34A', '#2563EB', '#DC2626', '#F59E0B', '#8B5CF6',
@@ -120,7 +96,10 @@ export default function MenuPage() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteItemTarget, setDeleteItemTarget] = useState(null);
   const [deletingItem, setDeletingItem] = useState(false);
-  const [catForm, setCatForm] = useState({ name: '', sortOrder: 0, image: '', color: '#16A34A', icon: 'utensils', isActive: true });
+  // Numeric fields are strings: the DOM text is the source of truth while
+  // typing (clearing stays empty, "3" never becomes "03"); conversion happens
+  // once, at submit.
+  const [catForm, setCatForm] = useState({ name: '', sortOrder: '0', image: '', color: '#16A34A', icon: 'utensils', isActive: true });
   const [catSubmitting, setCatSubmitting] = useState(false);
 
   // ── Update Category flow state ──
@@ -140,7 +119,7 @@ export default function MenuPage() {
 
   // Form state
   const [itemName, setItemName] = useState('');
-  const [itemPrice, setItemPrice] = useState(150);
+  const [itemPrice, setItemPrice] = useState('150');
   // AC / Non-AC prices (RESTAURANT mode only). Held as strings so an empty
   // field stays empty — the backend mirrors the base price when omitted.
   const [itemAcPrice, setItemAcPrice] = useState('');
@@ -178,9 +157,9 @@ export default function MenuPage() {
   const acNonAcPricing = isAcNonAcPricingEnabled(settings);
   const [itemSku, setItemSku] = useState('');
   const [itemBarcode, setItemBarcode] = useState('');
-  const [itemPrepTime, setItemPrepTime] = useState(10);
-  const [itemStockQty, setItemStockQty] = useState(50);
-  const [itemTax, setItemTax] = useState(5);
+  const [itemPrepTime, setItemPrepTime] = useState('10');
+  const [itemStockQty, setItemStockQty] = useState('50');
+  const [itemTax, setItemTax] = useState('5');
   const [itemKitchenCategory, setItemKitchenCategory] = useState('Main Course');
   const [itemGst, setItemGst] = useState(settings.gstPercentage || 5);
 
@@ -406,7 +385,7 @@ export default function MenuPage() {
 
   // ── Category CRUD Handlers ───────────────────────────────────
   const resetCatForm = () => {
-    setCatForm({ name: '', sortOrder: categories.length + 1, image: '', color: '#16A34A', icon: 'utensils', isActive: true });
+    setCatForm({ name: '', sortOrder: String(categories.length + 1), image: '', color: '#16A34A', icon: 'utensils', isActive: true });
     setEditingCat(null);
   };
 
@@ -429,7 +408,7 @@ export default function MenuPage() {
     setEditingCat(cat);
     setCatForm({
       name: cat.name,
-      sortOrder: cat.sortOrder || 0,
+      sortOrder: String(cat.sortOrder ?? 0),
       image: cat.image || '',
       color: cat.color || '#16A34A',
       icon: cat.icon || 'utensils',
@@ -441,11 +420,17 @@ export default function MenuPage() {
   const handleCatSubmit = async (e) => {
     e.preventDefault();
     if (!catForm.name.trim()) return;
+    // Display order is an integer >= 0; reject decimals/negatives at submit.
+    const rawSort = String(catForm.sortOrder ?? '').trim();
+    if (rawSort !== '' && !/^\d+$/.test(rawSort)) {
+      addToast('Display order must be a whole number (0 or more)', 'error');
+      return;
+    }
     setCatSubmitting(true);
     try {
       const payload = {
         name: catForm.name,
-        sortOrder: toNumber(catForm.sortOrder),
+        sortOrder: rawSort === '' ? 0 : Number(rawSort),
         image: catForm.image || undefined,
         color: catForm.color,
         icon: catForm.icon,
@@ -523,19 +508,45 @@ export default function MenuPage() {
       addToast(isDietaryBusiness ? 'Please enter a dish name' : 'Please enter a product name', 'error');
       return;
     }
-    if (itemPrice === '' || itemPrice == null || toNumber(itemPrice) <= 0) {
-      addToast('Please enter a price greater than 0', 'error');
-      return;
-    }
+    // ── Numeric validation at the submit boundary (never while typing) ──
+    // RESTAURANT mode has NO Base Price field: the stored base price is derived
+    // from Non-AC, so Non-AC is the required price there. Every other business
+    // type keeps the single required Price field unchanged.
     if (acNonAcPricing) {
-      if (itemAcPrice !== '' && toNumber(itemAcPrice) < 0) {
-        addToast('AC price cannot be negative', 'error');
+      const nonAcNum = Number(itemNonAcPrice);
+      if (itemNonAcPrice === '' || itemNonAcPrice == null || !Number.isFinite(nonAcNum) || nonAcNum <= 0) {
+        addToast('Please enter a Non-AC price greater than 0', 'error');
         return;
       }
-      if (itemNonAcPrice !== '' && toNumber(itemNonAcPrice) < 0) {
-        addToast('Non-AC price cannot be negative', 'error');
+      if (itemAcPrice !== '' && (!Number.isFinite(Number(itemAcPrice)) || Number(itemAcPrice) < 0)) {
+        addToast('AC price must be a valid number of 0 or more', 'error');
         return;
       }
+    } else {
+      const priceNum = Number(itemPrice);
+      if (itemPrice === '' || itemPrice == null || !Number.isFinite(priceNum) || priceNum <= 0) {
+        addToast('Please enter a price greater than 0', 'error');
+        return;
+      }
+    }
+    // Integer-only fields: preparation time, stock quantity and display order.
+    const integerFields = [
+      [itemPrepTime, 'Preparation time', true],
+      [itemStockQty, 'Stock quantity', true],
+    ];
+    for (const [value, label, allowEmpty] of integerFields) {
+      const raw = String(value ?? '').trim();
+      if (raw === '' && allowEmpty) continue;
+      if (!/^\d+$/.test(raw)) {
+        addToast(`${label} must be a whole number (0 or more)`, 'error');
+        return;
+      }
+    }
+    // Tax percentage is decimal but must stay within 0–100.
+    const taxNum = Number(itemTax);
+    if (!Number.isFinite(taxNum) || taxNum < 0 || taxNum > 100) {
+      addToast('Tax % must be a number between 0 and 100', 'error');
+      return;
     }
     const matchedCategory = categories.find(c => c.name === itemCategory);
     if (!itemCategory || !matchedCategory) {
@@ -557,12 +568,14 @@ export default function MenuPage() {
       // prep fields are omitted entirely for non-food tenants (not just hidden).
       const payload = {
         name: itemName.trim(),
-        price: toNumber(itemPrice),
-        // Restaurant mode sends both AC and Non-AC prices; empty → null so the
-        // backend mirrors the base price. Other modes omit them entirely.
+        // RESTAURANT mode: the stored base price is DERIVED from the Non-AC
+        // price (there is no Base Price field in the UI). AC stays optional —
+        // when blank the backend mirrors the base price. Other modes send their
+        // single price exactly as before.
+        price: acNonAcPricing ? toNumber(itemNonAcPrice) : toNumber(itemPrice),
         ...(acNonAcPricing ? {
           acPrice: itemAcPrice === '' ? null : toNumber(itemAcPrice),
-          nonAcPrice: itemNonAcPrice === '' ? null : toNumber(itemNonAcPrice),
+          nonAcPrice: toNumber(itemNonAcPrice),
         } : {}),
         description: itemDesc,
         image: itemImage,
@@ -1337,14 +1350,33 @@ export default function MenuPage() {
                 <input type="text" value={itemName} onChange={(e) => setItemName(e.target.value)}
                   className="w-full h-8 px-2 bg-slate-50 border rounded-lg outline-none focus:border-[#16A34A]" required />
               </div>
+              {/* Pricing. RESTAURANT tenants see ONLY Non-AC Price and AC Price —
+                  there is no Base Price field (the stored base price is derived
+                  from Non-AC). Every other business type keeps the single Price
+                  field and its existing behavior. */}
               <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-[9px] font-bold uppercase text-slate-400">{acNonAcPricing ? 'Base Price' : 'Price'} ({currency}) *</label>
-                  {/* no-spinner: direct numeric entry only — no increment/decrement arrows */}
-                  <input type="number" step="0.01" inputMode="decimal" value={itemPrice} onChange={(e) => setItemPrice(sanitizeNumeric(e.target.value))}
-                    className="no-spinner w-full h-8 px-2 bg-slate-50 border rounded-lg outline-none" required />
-                </div>
-                <div className="space-y-1">
+                {acNonAcPricing ? (
+                  <>
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-bold uppercase text-slate-400">Non-AC Price ({currency}) *</label>
+                      {/* no-spinner: direct numeric entry only — no increment/decrement arrows */}
+                      <input type="number" step="0.01" inputMode="decimal" value={itemNonAcPrice} onChange={(e) => setItemNonAcPrice(sanitizeNumeric(e.target.value))}
+                        className="no-spinner w-full h-8 px-2 bg-slate-50 border rounded-lg outline-none" required />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-bold uppercase text-slate-400">AC Price ({currency})</label>
+                      <input type="number" step="0.01" inputMode="decimal" value={itemAcPrice} onChange={(e) => setItemAcPrice(sanitizeNumeric(e.target.value))}
+                        placeholder="Same as Non-AC" className="no-spinner w-full h-8 px-2 bg-slate-50 border rounded-lg outline-none" />
+                    </div>
+                  </>
+                ) : (
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-bold uppercase text-slate-400">Price ({currency}) *</label>
+                    <input type="number" step="0.01" inputMode="decimal" value={itemPrice} onChange={(e) => setItemPrice(sanitizeNumeric(e.target.value))}
+                      className="no-spinner w-full h-8 px-2 bg-slate-50 border rounded-lg outline-none" required />
+                  </div>
+                )}
+                <div className={`space-y-1 ${acNonAcPricing ? 'col-span-2' : ''}`}>
                   <label className="text-[9px] font-bold uppercase text-slate-400">Category *</label>
                   <select value={itemCategory} onChange={(e) => { setItemCategory(e.target.value); setItemSubcategoryId(''); }}
                     className="w-full h-8 px-1 bg-slate-50 border rounded-lg outline-none">
@@ -1353,25 +1385,8 @@ export default function MenuPage() {
                 </div>
               </div>
 
-              {/* AC / Non-AC pricing (RESTAURANT mode only). Blank values fall
-                  back to the base price; the active price is chosen automatically
-                  by the selected table's floor. */}
               {acNonAcPricing && (
-                <div className="space-y-1">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <label className="text-[9px] font-bold uppercase text-slate-400">Non-AC Price ({currency})</label>
-                      <input type="number" step="0.01" inputMode="decimal" value={itemNonAcPrice} onChange={(e) => setItemNonAcPrice(sanitizeNumeric(e.target.value))}
-                        placeholder="Same as base" className="no-spinner w-full h-8 px-2 bg-slate-50 border rounded-lg outline-none" />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[9px] font-bold uppercase text-slate-400">AC Price ({currency})</label>
-                      <input type="number" step="0.01" inputMode="decimal" value={itemAcPrice} onChange={(e) => setItemAcPrice(sanitizeNumeric(e.target.value))}
-                        placeholder="Same as base" className="no-spinner w-full h-8 px-2 bg-slate-50 border rounded-lg outline-none" />
-                    </div>
-                  </div>
-                  <p className="text-[8px] text-slate-400 leading-snug">AC and Non-AC prices are automatically applied based on the selected table's floor.</p>
-                </div>
+                <p className="text-[8px] text-slate-400 leading-snug">AC and Non-AC prices are automatically applied based on the selected table's floor.</p>
               )}
 
               {/* Subcategory (Part 16) — depends on the selected category */}

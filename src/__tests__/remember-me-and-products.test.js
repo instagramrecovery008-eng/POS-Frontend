@@ -57,166 +57,166 @@ check(/login: async \(email, password, rememberMe\)/.test(authStore), 'the auth 
 check(/sessionStorage\.getItem\('pos_token'\)/.test(axiosSrc), 'the axios interceptor reads the token from either storage');
 check(/pos:session-expired/.test(axiosSrc), 'the 401 session-expiry event survives (existing flow)');
 
-// ═══ 2. PRODUCTS ON THE LOGIN PAGE ═════════════════════════════════════════
-section('2. LOGIN PAGE — company branding + product registry');
+// ═══ 2. BRANDING + PRODUCT REGISTRY ON THE LOGIN PAGE ══════════════════════
+section('2. LOGIN PAGE — QWIKOUT branding + live product registry');
 const company = read('config/company.js');
 const settingApi = read('api/setting.api.js');
+const productCardSrc = read('components/product/ProductCard.jsx');
 
-sub('Company identity (multi-product, not restaurant-only)');
+sub('Company and product identity');
 check(company.includes('Infinixo Technologies'), 'company name is Infinixo Technologies');
 check(company.includes('Technology that moves your business forward.'), 'company tagline present');
-check(company.includes('Your restaurant operations, all in one place.'), 'product headline present');
-check(company.includes('/infinixo-logo.png'), 'real Infinixo logo asset referenced (frontend/public/infinixo-logo.png)');
+check(company.includes('Every Sale, Every Table, One Workspace.'), 'exact product headline present');
+check(company.includes('run your restaurant or retail counter from one reliable point of sale'), 'product description present');
+check(company.includes('/infinixo-logo.png'), 'real Infinixo logo asset referenced');
+check(/name: 'QWIKOUT POS'/.test(company), 'the exact brand spelling QWIKOUT POS is configured');
+check(/logo: '\/qwikout-logo\.png'/.test(company), 'the single official logo asset is configured');
+check(/logoAlt: 'QWIKOUT POS — Point of Sales by Infinixo Technologies'/.test(company),
+  'the logo carries the full accessible alternative text');
+check(!/KlarGo POS/.test(company), 'no legacy KlarGo POS name remains in the brand configuration');
 
-sub('Data-driven "Our Products"');
-check(settingApi.includes('/products/public'), 'the public product endpoint is consumed');
+sub('Live products come from the public registry (not hardcoded)');
+check(settingApi.includes('/products/public'), 'the existing public product endpoint is consumed');
 check(/getPublicProducts/.test(settingApi), 'the Setting API exposes the product registry fetch');
-check(/setProducts\(list\)/.test(loginPage), 'the login page renders the live registry (not static config alone)');
-check(/products: \[\]/.test(company), 'no fake products are invented (static fallback is empty)');
+check(/throw new Error\(message\)/.test(settingApi), 'API failures are surfaced instead of being swallowed');
+check(!/catch \{\s*return \[\]/.test(settingApi), 'the client no longer silently converts errors to an empty list');
+check(/Array\.isArray\(json\?\.data\)/.test(settingApi), 'the response shape is validated');
+check(/getPublicProducts/.test(loginPage) && /\.then\(\(list\)/.test(loginPage), 'the login page renders the live registry');
+check(!/mockProducts|demoProducts|const PRODUCTS = \[/.test(loginPage), 'no placeholder products are invented');
 
-sub('Safe external links + graceful logo fallback');
-check(/rel="noreferrer noopener"/.test(loginPage), 'product links carry noopener/noreferrer');
-check(/e\.currentTarget\.style\.display = 'none'/.test(loginPage), 'a missing product/company logo degrades gracefully (no broken-image glyph)');
-check(loginPage.includes('object-contain'), 'the company logo is contained — never stretched, cropped or overflowing');
-check(/Secure Login/.test(loginPage), '"Secure Login" label retained on the login card');
-check(/KlarGo POS/.test(loginPage), 'KlarGo POS remains clearly identified as the current product');
+sub('Product cards render and degrade correctly');
+check(/productsStatus === 'loading'/.test(loginPage) && /aria-busy="true"/.test(loginPage),
+  'a loading state is rendered (accessible busy state)');
+check(/productsStatus === 'error'/.test(loginPage) && /Couldn&apos;t load the product catalog/.test(loginPage),
+  'a distinct API failure state is rendered (never silently hidden)');
+check(/setProductsRetry\(/.test(loginPage) && />\s*Retry\s*</.test(loginPage), 'the error state offers Retry');
+check(/No products are published right now/.test(loginPage), 'an explicit empty state is rendered');
+check(/products\.map\(\(product\)/.test(loginPage), 'cards are mapped from the API response');
+check(/ProductCard/.test(loginPage), 'cards render through the shared ProductCard component');
+check(/key=\{product\.id \|\| product\.slug \|\| product\.name\}/.test(loginPage),
+  'the registry id/slug/name keys the cards (order preserved)');
 
-// ═══ 3. PRODUCT-FIRST LOGIN PANEL ══════════════════════════════════════════
-section('3. LOGIN PAGE — KlarGo-first brand panel');
-const loginDir = path.resolve(ROOT, 'features/auth/pages');
-const loginPageSrc = fs.readFileSync(path.join(loginDir, 'LoginPage.jsx'), 'utf8');
+sub('The product card only links to a real destination');
+check(/new URL\(rawUrl\)/.test(productCardSrc) && /http:' \|\| parsed\.protocol === 'https:'/.test(productCardSrc),
+  'only http(s) destinations are accepted');
+check(!/COMPANY\.website/.test(productCardSrc), 'no fabricated fallback URL is used');
+check(/<a[\s\S]{0,160}target="_blank"[\s\S]{0,80}rel="noreferrer noopener"/.test(productCardSrc),
+  'valid destinations render a safe external link');
+check(/<article className=\{cardClass\}/.test(productCardSrc), 'cards without a URL are non-interactive');
+check(/isCurrent[\s\S]{0,120}border-\[#0866E8\]/.test(productCardSrc), 'the current product gets the brand blue accent');
+check(/onError=\{\(\) => setImgError\(true\)\}/.test(productCardSrc), 'a missing product logo degrades gracefully');
+check(/max-h-full max-w-full object-contain/.test(productCardSrc), 'the product logo is contained, never distorted');
+
+// ═══ 3. LEFT BRANDING/DESIGN HIERARCHY ═════════════════════════════════════
+section('3. LOGIN PAGE — left branding hierarchy (62%)');
+const loginPageSrc = fs.readFileSync(path.join(ROOT, 'features/auth/pages/LoginPage.jsx'), 'utf8');
 const companySrc = fs.readFileSync(path.join(ROOT, 'config/company.js'), 'utf8');
 
-sub('Product identity is primary, company identity secondary');
-check(/headline:\s*'Your restaurant operations, all in one place\.'/.test(companySrc),
-  'headline is the required product statement');
-check(loginPageSrc.includes('{COMPANY.headline}'), 'the product headline is rendered on the panel');
-check(/productName:\s*'KlarGo POS'/.test(companySrc) && loginPageSrc.includes('{COMPANY.productName}'),
-  'KlarGo POS is displayed as the product title');
-check(/productSubtitle:\s*'Smart restaurant operations, billing, inventory and team management'/.test(companySrc)
-  && loginPageSrc.includes('{COMPANY.productSubtitle}'),
-  'the product subtitle is rendered under the title');
-check(companySrc.includes('Technology that moves your business forward.'),
-  'the verified company tagline is retained');
-check(/attribution:\s*'A product by Infinixo Technologies'/.test(companySrc), 'company attribution copy is configured');
-check(loginPageSrc.includes('{COMPANY.attribution}'), 'the attribution is rendered');
-check(/href=\{COMPANY\.website\}[\s\S]{0,160}rel="noreferrer noopener"/.test(loginPageSrc),
-  'the attribution links to the verified company website (safe rel)');
-check(companySrc.includes("website: 'https://infinixotech.com'"), 'the company website is the verified Infinixo domain');
-
-sub('Official company logo — real asset, contained, never distorted');
-const logoPath = path.resolve(ROOT, '../public/infinixo-logo.png');
-check(fs.existsSync(logoPath), 'the official Infinixo logo asset exists (frontend/public/infinixo-logo.png)');
-const logoBytes = fs.readFileSync(logoPath);
-check(logoBytes.slice(1, 4).toString() === 'PNG', 'the logo file is a real PNG (not a placeholder)');
-check(/logo:\s*'\/infinixo-logo\.png'/.test(companySrc), 'the panel uses the official logo asset path');
-check(/function CompanyLogo/.test(loginPageSrc) && /<CompanyLogo logo=\{COMPANY\.logo\}/.test(loginPageSrc),
-  'the company logo renders through a contained image component');
-check(/max-h-6 max-w-full object-contain/.test(loginPageSrc), 'company logo is object-contain within max width/height (no stretching/overflow)');
-check(/onError=\{\(\) => setFailed\(true\)\}/.test(loginPageSrc), 'a failed logo load is handled (no broken-image glyph)');
-check(/const initials = \(name \|\| 'Infinixo Technologies'\)/.test(loginPageSrc),
-  'a clean text wordmark/monogram is the fallback when the asset is unavailable');
-check(/const PLATFORM_MARK = '\/klargo-icon\.png'/.test(loginPageSrc), 'the KlarGo POS product mark is separate from the company logo');
-check(/const DEFAULT_LOGO = '\/klargo-logo\.png'/.test(loginPageSrc), 'the tenant logo fallback is separate from the company logo');
-check(/COMPANY\.name/.test(loginPageSrc), 'the company name is shown next to the logo');
-
-sub('Four KlarGo POS feature cards');
-const featureCount = (loginPageSrc.match(/\{ icon: [A-Z][A-Za-z]+, title:/g) || []).length;
-check(featureCount === 4, `exactly four feature cards are declared (found ${featureCount})`);
-check(loginPageSrc.includes('Orders and billing'), 'feature: orders and billing');
-check(loginPageSrc.includes('Floors, tables and kitchen tickets'), 'feature: floors, tables and kitchen tickets');
-check(loginPageSrc.includes('Inventory, menu and staff'), 'feature: inventory, menu and staff');
-check(loginPageSrc.includes('Sales reports and analytics'), 'feature: sales reports and analytics');
-check(/FEATURES\.map\(/.test(loginPageSrc), 'the cards are rendered from the feature list');
-check(/grid grid-cols-2 gap-2/.test(loginPageSrc), 'the four cards use a compact two-column grid');
-check(/min-h-\[64px\]/.test(loginPageSrc), 'cards share a compact minimum height (visually balanced)');
-
-sub('Our Products (rectangular strip, deduplicated)');
-check(/Our Products/.test(loginPageSrc), '"Our Products" section heading present');
-check(loginPageSrc.includes('Explore'), 'each product card offers an Explore affordance');
-check(/visibleProducts\.map\(\(p\) =>/.test(loginPageSrc), 'cards are rendered from the deduplicated list');
-check(/href=\{p\.url \|\| COMPANY\.website\}/.test(loginPageSrc), 'a card without a URL falls back to the verified company site (never a dead link)');
-check(loginPageSrc.includes('p.isCurrent'), 'the current product (KlarGo POS) is visually distinguished');
-check(/dedupeProducts\(products, COMPANY\.products\)/.test(loginPageSrc),
-  'the live registry and the configured fallback are deduplicated');
-check(/mt-1\.5 flex w-full gap-2 overflow-x-auto overscroll-x-contain/.test(loginPageSrc),
-  'products render as a horizontal strip inside its own scroll container');
-check(/w-56 shrink-0 items-center gap-2\.5 rounded-xl/.test(loginPageSrc),
-  'each product is a compact rectangular card (not a large square)');
-check(/\{p\.description && \([\s\S]{0,160}\{p\.description\}/.test(loginPageSrc),
-  'each product card shows its short description when available');
-check(/\{p\.logo \? \(/.test(loginPageSrc) && /max-h-full max-w-full object-contain/.test(loginPageSrc),
-  'each product card shows a contained logo/icon (initial fallback otherwise)');
-
-sub('Product identity sits ABOVE the company identity');
-const idxProduct = loginPageSrc.indexOf('{COMPANY.productName}');
+sub('Content order: logo → headline → description → features → products → attribution');
+const idxLogo = loginPageSrc.indexOf('<BrandLogo');
 const idxHeadline = loginPageSrc.indexOf('{COMPANY.headline}');
-const idxFeatures = loginPageSrc.indexOf('FEATURES.map');
+const idxDescription = loginPageSrc.indexOf('{COMPANY.description}');
 const idxProducts = loginPageSrc.indexOf('Our Products');
+const idxFeatures = loginPageSrc.indexOf('FEATURES.map');
 const idxCompany = loginPageSrc.indexOf('{COMPANY.attribution}');
-check(idxProduct > 0 && idxProduct < idxHeadline && idxHeadline < idxFeatures && idxFeatures < idxProducts && idxProducts < idxCompany,
-  'panel order is: KlarGo branding → headline → features → products → company footer');
-check(/A product by Infinixo Technologies|\{COMPANY\.attribution\}/.test(loginPageSrc) && idxCompany > idxProducts,
+check(idxLogo > 0 && idxLogo < idxHeadline, 'the official logo sits above the headline');
+check(idxHeadline < idxDescription && idxDescription < idxFeatures, 'headline and description precede the feature row');
+check(idxFeatures < idxProducts && idxProducts < idxCompany, 'the feature row precedes the product section, attribution last');
+check(/A product by Infinixo Technologies|\{COMPANY\.attribution\}/.test(loginPageSrc) && idxCompany > idxFeatures,
   'the Infinixo attribution is at the BOTTOM of the panel');
 
-// ═══ 4. RESILIENCE, AUTH CONTRACT, MOBILE ═══════════════════════════════════
-section('4. LOGIN PAGE — resilience, auth contract, mobile layout');
+sub('Logo placement — exact asset, no plate, no repeated tagline');
+check(/<BrandLogo\s+priority\s+className=/.test(loginPageSrc), 'the logo is the first element using the shared component');
+check(!/<BrandLogo[\s\S]{0,160}surface="dark"/.test(loginPageSrc), 'the login logo has no white rectangular plate');
+check(!loginPageSrc.includes('{COMPANY.productSubtitle}'), 'the logo tagline is not repeated beneath the logo');
+check(/\{COMPANY\.headline\}/.test(loginPageSrc) && /headline:\s*'Every Sale, Every Table, One Workspace\.'/.test(companySrc),
+  'the exact reference headline is rendered');
+check(/\{COMPANY\.description\}/.test(loginPageSrc), 'the product description is rendered');
+check(companySrc.includes("website: 'https://infinixotech.com'"), 'the verified Infinixo domain is used');
+check(/attribution:\s*'A product by Infinixo Technologies'/.test(companySrc), 'attribution copy is configured');
 
-sub('A product-registry / branding failure never breaks sign-in');
-check(/getPublicProducts: async \(\) => \{[\s\S]*?catch \{\s*return \[\];/.test(settingApi),
-  'a failed products request resolves to an empty list (never throws)');
-check(/if \(!cancelled && list && list\.length > 0\)/.test(loginPageSrc),
-  'a failed/empty products response keeps the configured fallback');
-check(/visibleProducts\.length > 0 && \(/.test(loginPageSrc), 'the products section is optional — it is skipped, not fatal');
-check(/<LoginForm/.test(loginPageSrc), 'the login form always renders');
-check(/catch \{\s*\/\/ Silently fail — use fallback branding/.test(loginPageSrc),
-  'branding failures fall back silently');
-check(/branding\.name \|\| COMPANY\.productName/.test(loginPageSrc), 'tenant branding falls back to KlarGo POS');
-check(/logo \|\| DEFAULT_LOGO/.test(loginPageSrc), 'a missing tenant logo falls back to the KlarGo mark');
-check(/function BusinessLogo/.test(loginPageSrc) && /object-contain/.test(loginPageSrc),
-  'the tenant logo is contained inside a fixed shell');
+sub('Logo asset integrity');
+const qwikoutLogoPath = path.resolve(ROOT, '../public/qwikout-logo.png');
+check(fs.existsSync(qwikoutLogoPath), 'the official QWIKOUT logo asset exists (frontend/public/qwikout-logo.png)');
+const qwikoutBytes = fs.readFileSync(qwikoutLogoPath);
+check(qwikoutBytes.slice(1, 4).toString() === 'PNG', 'the QWIKOUT logo is a real PNG (not a placeholder)');
+const brandLogo = read('components/common/BrandLogo.jsx');
+check(/src=\{BRAND\.logo\}/.test(brandLogo), 'every screen reuses the single configured logo asset');
+check(/max-h-full max-w-full object-contain/.test(brandLogo), 'the logo uses object-contain (never stretched or cropped)');
+check(/BRAND\.logoAlt/.test(brandLogo) && /QWIKOUT POS — Point of Sales by Infinixo Technologies/.test(company),
+  'the logo alt text names the product and company');
+check(/surface === 'dark'/.test(brandLogo) && /bg-white/.test(brandLogo),
+  'the shared component keeps a neutral plate only where dark surfaces need one');
 
-sub('Login request format + role-based redirects unchanged');
+sub('“Our Products” heading + responsive 2/3/4-column grid');
+check(/aria-labelledby="our-products-heading"/.test(loginPageSrc), 'the products section is labelled');
+check(/>\s*Our Products\s*</.test(loginPageSrc), 'Our Products heading present');
+check(/h-0\.5 w-8 rounded-full bg-gradient-to-r from-\[#0866E8\] to-\[#9228F5\]/.test(loginPageSrc),
+  'the heading has the short blue→purple underline');
+check(/grid-cols-2[\s\S]{0,80}sm:grid-cols-3[\s\S]{0,80}xl:grid-cols-4/.test(loginPageSrc),
+  'cards use two columns on mobile, three on tablet, four on wide screens');
+
+sub('Compact feature row');
+check(/label: 'Orders & Billing'/.test(loginPageSrc), 'feature: Orders & Billing');
+check(/label: 'Tables & KOT'/.test(loginPageSrc), 'feature: Tables & KOT');
+check(!/label: 'Inventory'/.test(loginPageSrc), 'Inventory is not listed in this feature row (module untouched)');
+check(/label: 'Reports'/.test(loginPageSrc), 'feature: Reports');
+check(/FEATURES\.map\(/.test(loginPageSrc), 'the feature row is data-driven');
+check(/flex flex-wrap items-center gap-x-5/.test(loginPageSrc), 'the features render as a compact wrapping row');
+
+sub('Desktop 60/40 split, light surface');
+check(/lg:grid-cols-\[minmax\(0,60fr\)_minmax\(0,40fr\)\]/.test(loginPageSrc), 'the desktop grid is 60/40');
+check(/bg-\[#F5F8FF\]/.test(loginPageSrc) && /bg-\[#0866E8\]\/10/.test(loginPageSrc),
+  'light blue-tinted surface with blue/purple accents');
+check(!/bg-gradient-to-br/.test(loginPageSrc), 'no unnecessary dark gradient background');
+check(/rounded-2xl border border-slate-200 bg-white p-5 shadow-/.test(loginPageSrc),
+  'the login card is white with rounded corners, a border and a soft shadow');
+
+// ═══ 4. RESILIENCE, LOGIN CARD, AUTH CONTRACT, RESPONSIVE ══════════════════
+section('4. LOGIN CARD + resilience + responsive contracts');
+
+sub('Login card hierarchy');
+check(/\{displayName\}/.test(loginPageSrc), 'the tenant/workspace name is rendered (never hardcoded)');
+check(/Secure Login/.test(loginPageSrc), 'the Secure Login indicator is retained');
+check(/Sign in to your QWIKOUT POS workspace\./.test(loginPageSrc), 'the product sign-in line is rendered');
+check(/<LoginForm/.test(loginPageSrc), 'the existing login form is used');
+check(!/onForgotPassword/.test(loginPageSrc), 'no Forgot Password link is wired to the card');
+check(!/Forgot Password/.test(loginForm), 'the Forgot Password link is removed from the login form');
+check(/>\s*OR\s*</.test(loginPageSrc), 'the OR divider is present');
+check(/Create New Account/.test(loginPageSrc), 'the outlined Create New Account action is present');
+check(/Privacy Policy/.test(loginPageSrc) && /Terms of Service/.test(loginPageSrc), 'policy links are present');
+check(/Infinixo Technologies\. All rights reserved\./.test(loginPageSrc), 'copyright is present');
+
+sub('Password recovery link removed (no invented endpoint, no dead UI)');
+check(!/forgotOpen/.test(loginPageSrc), 'the forgot-password dialog state is removed');
+check(!/Forgot your password/.test(loginPageSrc), 'the recovery dialog is removed from the card');
+check(!/forgotOpen|onForgotPassword/.test(loginForm), 'the form exposes no forgot-password control');
+
+sub('Authentication contract unchanged');
 check(/const email = userId\.includes\('@'\) \? userId : `\$\{userId\}@restaurant\.com`/.test(loginPageSrc),
   'a bare user id is still expanded to <id>@restaurant.com');
 check(/await login\(email, password, remember\)/.test(loginPageSrc), 'the auth-store login contract is unchanged');
 check(/setScreen\(resolveHomeScreen\(user, onboarding\)\)/.test(loginPageSrc), 'role-based redirect resolution is unchanged');
 check(/if \(isUnlocked && user\)/.test(loginPageSrc), 'the redirect only runs for an unlocked session');
-check(/useSettingsStore\.getState\(\)\.fetchSettings\(\)/.test(loginPageSrc), 'settings still load right after a successful login');
+check(/useSettingsStore\.getState\(\)\.fetchSettings\(\)/.test(loginPageSrc), 'settings still load after login');
 check(/setScreen\('register'\)/.test(loginPageSrc), 'Create Account still routes to registration');
-check(/PolicyTextModal/.test(loginPageSrc), 'policy links/modals are preserved');
-check(!/forgot[- ]?password/i.test(loginPageSrc), 'no invented Forgot Password flow');
+check(/PolicyTextModal/.test(loginPageSrc), 'policy modals are preserved');
+check(/getPublicProducts/.test(loginPageSrc) && /\.catch\(\(err\)/.test(loginPageSrc),
+  'a product API failure is contained and never blocks sign-in');
 
-sub('Mobile layout — stacked, no horizontal overflow');
-check(/className="w-full max-w-\[420px\]/.test(loginPageSrc), 'the login card is fluid with a max width');
-// The product strip is the ONLY horizontally scrollable surface (required by the
-// design); the page itself must never scroll sideways.
-const hScrollSurfaces = (loginPageSrc.match(/overflow-x-(auto|scroll)/g) || []).length;
-check(hScrollSurfaces === 1, `only the products strip scrolls horizontally (${hScrollSurfaces})`);
-check(/mt-1\.5 flex w-full gap-2 overflow-x-auto/.test(loginPageSrc),
-  'that scroll container is the products strip, bounded by the panel width');
-check(!/className="[^"]*(flex|min-h)[^"]*overflow-x-auto/.test(loginPageSrc.split('Our Products')[0] || ''),
-  'no horizontal scrolling above the products section');
-check(/hidden overflow-hidden bg-gradient-to-br[\s\S]{0,120}lg:flex/.test(loginPageSrc),
-  'the brand panel is desktop-only (lg+); mobile stacks the form first');
-check(/lg:hidden/.test(loginPageSrc), 'a compact mobile brand header replaces the panel on small screens');
-check(/min-h-\[100dvh\] w-full flex-col/.test(loginPageSrc), 'the page stacks vertically on mobile with a dvh floor');
+sub('Responsive layout');
+check(/min-h-\[100dvh\] w-full/.test(loginPageSrc), 'the page stacks vertically on mobile with a dvh floor');
+check(/lg:grid lg:min-h-\[100dvh\]/.test(loginPageSrc), 'the desktop root is a grid with a dvh floor');
+check(!/lg:h-\[100dvh\]|lg:max-h-\[100dvh\]/.test(loginPageSrc),
+  'no fixed desktop height that would clip content');
+check(/relative order-2 flex[^\"]*overflow-hidden bg-\[#F5F8FF\]/.test(loginPageSrc), 'the branding section stays visible on mobile');
+check(!/relative hidden overflow-hidden/.test(loginPageSrc), 'the branding section is not hidden on small screens');
+check(/order-1[^\"]*lg:order-2/.test(loginPageSrc), 'the login form is prioritized above the brand panel on mobile');
+check(/lg:hidden">\s*<BrandLogo priority className="mx-auto/.test(loginPageSrc), 'a compact centered logo sits above the mobile form');
+check(/w-full max-w-\[400px\]/.test(loginPageSrc), 'the login card is fluid with a max width');
+check(!/overflow-x-(auto|scroll)/.test(loginPageSrc), 'nothing scrolls horizontally');
+check(!/lg:overflow-y-auto/.test(loginPageSrc), 'no internal desktop panel scrollbars (natural document flow)');
 
-sub('Desktop fits 100dvh — no page scrolling, card never clipped');
-check(/lg:h-\[100dvh\] lg:max-h-\[100dvh\][\s\S]{0,80}lg:overflow-hidden/.test(loginPageSrc),
-  'the desktop root is exactly 100dvh tall and does not scroll');
-check(/lg:grid-cols-\[minmax\(0,52fr\)_minmax\(0,48fr\)\]/.test(loginPageSrc),
-  'the desktop layout is a two-column grid');
-check(/lg:flex lg:min-h-0 lg:flex-col/.test(loginPageSrc),
-  'the brand panel is a min-h-0 flex column (its footer stays inside the viewport)');
-check(/lg:h-full lg:min-h-0/.test(loginPageSrc),
-  'the sign-in column is bounded by the viewport height');
-check(/px-8 py-7/.test(loginPageSrc) && !/p-10 xl:p-14|py-12/.test(loginPageSrc),
-  'panel padding and page padding are reduced (compact layout)');
-check(/rounded-2xl border border-slate-200 bg-white p-5 shadow-/.test(loginPageSrc),
-  'the login card uses compact padding');
-check(/flex flex-1 flex-col items-center justify-center/.test(loginPageSrc),
-  'the login card stays centered in its column');
 
 // ═══ 5. SUPER ADMIN PRODUCTS SCREEN ═════════════════════════════════════════
 section('5. SUPER ADMIN — Products Management screen');

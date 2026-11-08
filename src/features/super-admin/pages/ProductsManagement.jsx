@@ -1,10 +1,12 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Package, Plus, Pencil, Power, Trash2, Search, X, Loader2, ExternalLink,
-  Gauge, ImageOff, RefreshCw, CheckCircle2, AlertCircle,
+  Gauge, ImageOff, RefreshCw, CheckCircle2, AlertCircle, Upload,
 } from 'lucide-react';
 import { superAdminApi } from '../../../api/superAdmin.api';
 import { COMPANY } from '../../../config/company';
+import { sanitizeNumeric, toNumber } from '../../../utils/numericHelpers';
+import { resolveAssetUrl } from '../../../utils/assetUrl';
 
 // URL must resolve and be http(s) — mirrors the backend's own validation.
 const isValidUrl = (value) => {
@@ -26,8 +28,12 @@ const EMPTY_FORM = {
   url: '',
   logo: '',
   isActive: true,
-  sortOrder: 0,
+  sortOrder: '0',
 };
+
+// Mirrors the server-side limit (PRODUCT_LOGO_MAX_BYTES, default 2 MB).
+const MAX_LOGO_BYTES = 2 * 1024 * 1024;
+const ALLOWED_LOGO_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 
 /** Small inline error banner shared by list + form surfaces. */
 function ErrorBanner({ message, onClose, onRetry }) {
@@ -90,15 +96,20 @@ function ProductsSkeleton() {
   );
 }
 
-/** Product logo with graceful fallback (initial letter) — never a broken image glyph. */
+/**
+ * Product logo with graceful fallback (initial letter) — never a broken image
+ * glyph. Shared by the Super Admin list and the login product cards.
+ */
 function ProductLogo({ logo, name, size = 'h-10 w-10' }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => { setFailed(false); }, [logo]);
-  if (logo && !failed) {
+  // /uploads/... paths live on the API origin, not the SPA origin.
+  const src = resolveAssetUrl(logo);
+  if (src && !failed) {
     return (
       <span className={`flex ${size} shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white p-1`}>
         <img
-          src={logo}
+          src={src}
           alt={`${name} logo`}
           className="max-h-full max-w-full object-contain"
           onError={() => setFailed(true)}
@@ -127,6 +138,13 @@ export default function ProductsManagement() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [modalError, setModalError] = useState('');
+  // Preview shown before saving. Holds either the object URL of a file the user
+  // just picked (upload in flight) or the persisted logo path returned by the API.
+  const [imagePreview, setImagePreview] = useState('');
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [removingLogo, setRemovingLogo] = useState(false);
+  const localPreviewUrlRef = useRef(null); // object URL for preview, revoked on cleanup
+  const fileInputRef = useRef(null);
 
   const [busyId, setBusyId] = useState(null); // status-toggle/delete in flight
   const [confirmDelete, setConfirmDelete] = useState(null); // product row awaiting confirmation
@@ -137,10 +155,18 @@ export default function ProductsManagement() {
     setLoadError('');
     try {
       const resp = await superAdminApi.getProducts();
-      // GET /super-admin/products → { success, message, data: [...] }.
-      setProducts(Array.isArray(resp?.data) ? resp.data : Array.isArray(resp) ? resp : []);
+      // BACKEND RESPONSE SHAPE:
+      // Success: { success: true, message: 'Products fetched successfully', data: [...] }
+      // Error:    { success: false, code: 'PRODUCT_REGISTRY_...', message: '...' }
+      if (!resp?.success) {
+        setLoadError(resp?.message || 'Failed to load products.');
+        setProducts([]);
+      } else {
+        setProducts(Array.isArray(resp?.data) ? resp.data : []);
+      }
     } catch (e) {
       setLoadError(e.message || 'Failed to load products.');
+      setProducts([]);
     } finally {
       setLoading(false);
     }
@@ -155,6 +181,14 @@ export default function ProductsManagement() {
     return () => clearTimeout(t);
   }, [notice]);
 
+  // Release the object URL whenever the modal closes / unmounts.
+  useEffect(() => () => {
+    if (localPreviewUrlRef.current) {
+      URL.revokeObjectURL(localPreviewUrlRef.current);
+      localPreviewUrlRef.current = null;
+    }
+  }, []);
+
   const slugify = (value) => value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
   const openCreate = () => {
@@ -162,6 +196,7 @@ export default function ProductsManagement() {
     setForm(EMPTY_FORM);
     setFieldErrors({});
     setModalError('');
+    setImagePreview('');
     setModalOpen(true);
   };
 
@@ -175,10 +210,11 @@ export default function ProductsManagement() {
       url: product.url || '',
       logo: product.logo || '',
       isActive: product.isActive !== false,
-      sortOrder: product.sortOrder ?? 0,
+      sortOrder: String(product.sortOrder ?? 0),
     });
     setFieldErrors({});
     setModalError('');
+    setImagePreview(product.logo || '');
     setModalOpen(true);
   };
 
@@ -190,32 +226,46 @@ export default function ProductsManagement() {
     if (!slug) errs.slug = 'Slug is required.';
     else if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) errs.slug = 'Lowercase letters, numbers and dashes only.';
     if (form.url.trim() && !isValidUrl(form.url)) errs.url = 'Enter a valid http(s) URL.';
+    // Logo may be a self-hosted path (/uploads/products/…), an http(s) URL, or
+    // the temporary blob: preview of a file still uploading — never inline data.
     if (form.logo.trim()) {
       const l = form.logo.trim();
-      const ok = l.startsWith('/') || isValidUrl(l);
+      const ok = l.startsWith('/') || l.startsWith('blob:') || isValidUrl(l);
       if (!ok) errs.logo = 'Use an asset path (/…) or a valid http(s) URL.';
     }
-    if (typeof form.sortOrder !== 'number' || form.sortOrder < 0) errs.sortOrder = 'Display order must be 0 or more.';
+    // Display order: integer, non-negative. Empty means "not provided" → 0.
+    const rawSort = String(form.sortOrder ?? '').trim();
+    if (rawSort === '') {
+      errs.sortOrder = '';
+    } else if (!/^\d+$/.test(rawSort)) {
+      errs.sortOrder = 'Display order must be a whole number (0 or more).';
+    } else if (Number(rawSort) > 9999) {
+      errs.sortOrder = 'Display order must be 9999 or less.';
+    }
+    Object.keys(errs).forEach((k) => { if (!errs[k]) delete errs[k]; });
     setFieldErrors(errs);
     return { ok: Object.keys(errs).length === 0, slug };
   };
 
   const handleSave = async (e) => {
     e.preventDefault();
-    if (saving) return;
+    if (saving || uploadingLogo) return;
     const { ok, slug } = validateForm();
     if (!ok) return;
     setSaving(true);
     setModalError('');
+    const trimmedLogo = form.logo.trim();
+    // Never persist a temporary blob: preview — only a stored path/URL.
+    const storedLogo = trimmedLogo && !trimmedLogo.startsWith('blob:') ? trimmedLogo : null;
     const payload = {
       name: form.name.trim(),
       slug,
       description: form.description.trim() || null,
       category: form.category.trim() || null,
       url: form.url.trim() || null,
-      logo: form.logo.trim() || null,
+      logo: storedLogo,
       isActive: form.isActive,
-      sortOrder: form.sortOrder,
+      sortOrder: toNumber(sanitizeNumeric(form.sortOrder)),
     };
     try {
       if (editing) {
@@ -223,6 +273,24 @@ export default function ProductsManagement() {
         setNotice(resp?.message || `“${payload.name}” updated.`);
       } else {
         const resp = await superAdminApi.createProduct(payload);
+        const createdId = resp?.data?.id;
+        // A logo picked before the product existed is uploaded now that we
+        // have an id. Failure here must not discard the created product.
+        if (createdId && pendingLogoFileRef.current) {
+          const fd = new FormData();
+          fd.append('logo', pendingLogoFileRef.current);
+          try {
+            const logoResp = await superAdminApi.uploadProductLogo(createdId, fd);
+            if (!logoResp?.data?.logo) throw new Error('No logo path returned.');
+          } catch (logoErr) {
+            setNotice(`“${payload.name}” created, but the logo upload failed. Edit the product to retry.`);
+            pendingLogoFileRef.current = null;
+            setModalOpen(false);
+            await load();
+            return;
+          }
+          pendingLogoFileRef.current = null;
+        }
         setNotice(resp?.message || `“${payload.name}” created.`);
       }
       setModalOpen(false);
@@ -262,6 +330,96 @@ export default function ProductsManagement() {
       setConfirmDelete(null);
     } finally {
       setDeleteBusy(false);
+    }
+  };
+
+  // ── Logo upload ────────────────────────────────────────────────────────────
+  // The file goes to POST /super-admin/products/:id/logo as multipart. A new
+  // product has no id yet, so the file is held in state and uploaded right
+  // after the product row is created (see handleSave → uploadPendingLogo).
+  const pendingLogoFileRef = useRef(null);
+
+  const handlePickLogo = () => {
+    if (uploadingLogo || removingLogo) return;
+    fileInputRef.current?.click();
+  };
+
+  const handleLogoFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (e.target) e.target.value = ''; // allow re-picking the same file
+    if (!file) return;
+
+    // Client-side validation (server re-validates magic bytes + decode).
+    if (!ALLOWED_LOGO_TYPES.includes(file.type)) {
+      setModalError('Only PNG, JPG and WebP images are supported.');
+      return;
+    }
+    if (file.size > MAX_LOGO_BYTES) {
+      setModalError('Image size must be less than 2MB.');
+      return;
+    }
+
+    setModalError('');
+    if (localPreviewUrlRef.current) {
+      URL.revokeObjectURL(localPreviewUrlRef.current);
+      localPreviewUrlRef.current = null;
+    }
+    const objectUrl = URL.createObjectURL(file);
+    localPreviewUrlRef.current = objectUrl;
+    setImagePreview(objectUrl);
+    setForm((f) => ({ ...f, logo: objectUrl }));
+
+    // Upload immediately for an existing product; defer for a new one.
+    if (!editing?.id) {
+      pendingLogoFileRef.current = file;
+      return;
+    }
+
+    setUploadingLogo(true);
+    try {
+      const fd = new FormData();
+      fd.append('logo', file);
+      const resp = await superAdminApi.uploadProductLogo(editing.id, fd);
+      const stored = resp?.data?.logo || null;
+      if (!stored) throw new Error('The server did not return a stored logo path.');
+      setForm((f) => ({ ...f, logo: stored }));
+      setImagePreview(stored);
+      setProducts((prev) => prev.map((p) => (p.id === editing.id ? { ...p, logo: stored } : p)));
+      setNotice('Product logo updated.');
+    } catch (err) {
+      setModalError(err.message || 'Failed to upload the product logo.');
+      // Roll back the optimistic preview so a blob: URL can never be submitted.
+      setForm((f) => ({ ...f, logo: editing.logo || '' }));
+      setImagePreview(editing.logo || '');
+    } finally {
+      setUploadingLogo(false);
+    }
+  };
+
+  const handleRemoveLogo = async () => {
+    if (uploadingLogo || removingLogo) return;
+    if (localPreviewUrlRef.current) {
+      URL.revokeObjectURL(localPreviewUrlRef.current);
+      localPreviewUrlRef.current = null;
+    }
+    pendingLogoFileRef.current = null;
+    setImagePreview('');
+    setForm((f) => ({ ...f, logo: '' }));
+
+    // Nothing stored yet (create flow / never uploaded) — clearing is enough.
+    if (!editing?.id) return;
+    setRemovingLogo(true);
+    try {
+      await superAdminApi.removeProductLogo(editing.id);
+      setProducts((prev) => prev.map((p) => (p.id === editing.id ? { ...p, logo: null } : p)));
+      setEditing((prev) => (prev ? { ...prev, logo: null } : prev));
+      setNotice('Product logo removed.');
+    } catch (err) {
+      setModalError(err.message || 'Failed to remove the product logo.');
+      setImagePreview(editing.logo || '');
+      setForm((f) => ({ ...f, logo: editing.logo || '' }));
+    } finally {
+      setRemovingLogo(false);
     }
   };
 
@@ -486,7 +644,7 @@ export default function ProductsManagement() {
             </div>
 
             <div className="flex-1 space-y-4 overflow-y-auto p-5">
-              <ErrorBanner message={modalError} />
+              <ErrorBanner message={modalError} onClose={() => setModalError('')} />
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
@@ -495,7 +653,7 @@ export default function ProductsManagement() {
                     id="product-name"
                     value={form.name}
                     onChange={(e) => setForm({ ...form, name: e.target.value })}
-                    placeholder="e.g. KlarGo POS"
+                    placeholder="e.g. QWIKOUT POS"
                     className={inputCls('name')}
                   />
                   {fieldErrors.name && <p className="mt-1 text-[10px] font-semibold text-red-600">{fieldErrors.name}</p>}
@@ -507,7 +665,7 @@ export default function ProductsManagement() {
                     value={form.slug}
                     onChange={(e) => setForm({ ...form, slug: e.target.value })}
                     onBlur={() => { if (!form.slug.trim()) setForm((f) => ({ ...f, slug: slugify(f.name) })); }}
-                    placeholder="klargo-pos"
+                    placeholder="qwikout-pos"
                     autoCapitalize="off"
                     spellCheck={false}
                     className={inputCls('slug')}
@@ -546,8 +704,10 @@ export default function ProductsManagement() {
                     id="product-sort"
                     type="number"
                     min={0}
+                    step={1}
+                    inputMode="numeric"
                     value={form.sortOrder}
-                    onChange={(e) => setForm({ ...form, sortOrder: Number(e.target.value) })}
+                    onChange={(e) => setForm({ ...form, sortOrder: sanitizeNumeric(e.target.value) })}
                     className={inputCls('sortOrder')}
                   />
                   {fieldErrors.sortOrder && <p className="mt-1 text-[10px] font-semibold text-red-600">{fieldErrors.sortOrder}</p>}
@@ -568,23 +728,77 @@ export default function ProductsManagement() {
                 {fieldErrors.url && <p className="mt-1 text-[10px] font-semibold text-red-600">{fieldErrors.url}</p>}
               </div>
 
-              <div>
-                <label htmlFor="product-logo" className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                  Logo (asset path or URL)
-                </label>
+              {/* ── Product logo / image ── */}
+              <div className="space-y-2">
+                <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                  Product logo / image
+                </span>
+                <p className="text-[10px] leading-relaxed text-slate-400">
+                  PNG, JPG or WebP up to 2 MB. Shown on the login page's product cards.
+                </p>
+
+                <div className="flex items-center gap-3">
+                  <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white p-1.5">
+                    {imagePreview ? (
+                      <img
+                        src={resolveAssetUrl(imagePreview)}
+                        alt="Product logo preview"
+                        className="max-h-full max-w-full object-contain"
+                      />
+                    ) : (
+                      <span className="flex flex-col items-center gap-1 text-slate-300">
+                        <ImageOff className="h-5 w-5" />
+                        <span className="text-[8px] font-bold uppercase tracking-wider">No image</span>
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex min-w-0 flex-1 flex-wrap gap-2">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      id="product-logo"
+                      accept="image/png,image/jpeg,image/webp"
+                      onChange={handleLogoFile}
+                      className="hidden"
+                      disabled={uploadingLogo || removingLogo}
+                    />
+                    <button
+                      type="button"
+                      onClick={handlePickLogo}
+                      disabled={uploadingLogo || removingLogo || saving}
+                      className="flex h-9 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 transition-colors hover:border-[#16A34A] hover:text-[#15803D] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      {uploadingLogo ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                      {uploadingLogo ? 'Uploading…' : imagePreview ? 'Replace image' : 'Upload image'}
+                    </button>
+                    {imagePreview && (
+                      <button
+                        type="button"
+                        onClick={handleRemoveLogo}
+                        disabled={uploadingLogo || removingLogo || saving}
+                        className="flex h-9 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-red-500 transition-colors hover:border-red-300 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                      >
+                        {removingLogo ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                        {removingLogo ? 'Removing…' : 'Remove'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <label htmlFor="product-logo-path" className="sr-only">Logo asset path or URL</label>
                 <input
-                  id="product-logo"
-                  value={form.logo}
-                  onChange={(e) => setForm({ ...form, logo: e.target.value })}
-                  placeholder="/uploads/logos/product.png or https://…"
+                  id="product-logo-path"
+                  value={form.logo.startsWith('blob:') ? '' : form.logo}
+                  onChange={(e) => {
+                    setForm((f) => ({ ...f, logo: e.target.value }));
+                    setImagePreview(e.target.value);
+                  }}
+                  placeholder="/uploads/products/… or https://…"
                   autoCapitalize="off"
                   spellCheck={false}
                   className={inputCls('logo')}
                 />
-                <p className="mt-1 flex items-center gap-1 text-[10px] text-slate-400">
-                  <ImageOff className="h-3 w-3" />
-                  Missing logos fall back to the product's initial — the layout never breaks.
-                </p>
                 {fieldErrors.logo && <p className="mt-1 text-[10px] font-semibold text-red-600">{fieldErrors.logo}</p>}
               </div>
 
@@ -616,7 +830,7 @@ export default function ProductsManagement() {
               </button>
               <button
                 type="submit"
-                disabled={saving}
+                disabled={saving || uploadingLogo || removingLogo}
                 className="flex h-10 items-center gap-2 rounded-xl bg-[#16A34A] px-5 text-xs font-bold uppercase tracking-wider text-white transition-all hover:bg-[#15803D] disabled:opacity-60 cursor-pointer"
               >
                 {saving && <Loader2 className="h-4 w-4 animate-spin" />}

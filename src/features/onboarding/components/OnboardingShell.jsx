@@ -1,5 +1,6 @@
 import React from 'react';
 import { Check, X } from 'lucide-react';
+import BrandLogo from '../../../components/common/BrandLogo';
 import { PROGRESS_STEPS, progressIndexForPage } from '../onboarding.lib';
 
 /**
@@ -20,20 +21,12 @@ export default function OnboardingShell({ page, children, banner, onLogout }) {
     <div className="min-h-[100dvh] bg-[#F8FAFC] flex flex-col font-sans overflow-x-clip pt-safe pb-safe">
       {/* ── Platform brand header ── */}
       <header className="bg-white border-b border-slate-200 px-4 sm:px-6 py-3 flex items-center justify-between shadow-sm shrink-0">
-        <div className="flex items-center gap-2.5">
-          <img
-            src="/klargo-icon.png"
-            alt="KlarGo"
-            className="w-9 h-9 rounded-[10px] object-cover bg-white"
-          />
-          <div>
-            <h1 className="text-sm font-extrabold tracking-tight text-[#16A34A] uppercase leading-none">
-              KlarGo POS
-            </h1>
-            <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
-              Business Onboarding
-            </p>
-          </div>
+        <div className="flex min-w-0 items-center gap-3">
+          <BrandLogo priority className="h-10 w-[136px] sm:h-12 sm:w-[164px]" />
+          <span className="hidden sm:block h-8 w-px bg-slate-200" aria-hidden="true" />
+          <p className="hidden sm:block text-[9px] font-bold uppercase tracking-[0.18em] text-slate-400">
+            Business Onboarding
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <p className="hidden sm:block text-[10px] font-semibold text-slate-400">

@@ -144,13 +144,24 @@ const NAV_TO = (label) => `(() => {
 const CLICK_TITLE = (label) => `[...document.querySelectorAll('button[title]')].find(b => b.getAttribute('title') === ${JSON.stringify(label)})`;
 
 const goToScreen = async (label) => {
-  const how = await evaluate(NAV_TO(label));
-  if (how === 'drawer-open') {
-    await sleep(600);
-    await trustedClickExpr(CLICK_TITLE(label));
+  // The shell mounts asynchronously after a reload; retry until the nav item
+  // exists instead of assuming it is already on screen.
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const how = await evaluate(NAV_TO(label));
+    if (how === 'rail') {
+      await sleep(1800);
+      return how;
+    }
+    if (how === 'drawer-open') {
+      await sleep(600);
+      await trustedClickExpr(CLICK_TITLE(label));
+      await sleep(1800);
+      return how;
+    }
+    await sleep(800);
   }
   await sleep(1800);
-  return how;
+  return 'not-found';
 };
 
 // ── Boot the app with the API session ──
@@ -251,7 +262,7 @@ async function openTableAndAssertInlineMenu(viewportName) {
       stillOnBoard: txt.includes('Restaurant Floors & Tables'),
       overlayMounted: overlays.length,
       activeNav,
-      hasSearch: !!document.querySelector('input[placeholder="Search dishes, categories..."]'),
+      hasSearch: !!document.querySelector('input[aria-label="Search the whole menu"]'),
       // Step labels render uppercase via CSS — match case-insensitively.
       hasReviewStep: /review/i.test(txt),
       hasMenuStep: /menu/i.test(txt),
@@ -290,14 +301,17 @@ async function exerciseMenu() {
   // rendered card must belong to that category (checked against /api/menu). ──
   // The chip name comes from the button's OWN text nodes only (the count badge
   // is a separate <span>, so a name ending in digits stays intact).
-  const CHIP_NAME = `(b) => [...b.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join('').trim()`;
+  // Chip label = the name <span> (the count badge is the rounded-full span).
+  // Fallback keeps older markup (name as a direct text node) working.
+  const CHIP_NAME = "(b) => { const direct = [...b.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join('').trim(); if (direct) return direct; const nameSpan = [...b.querySelectorAll('span')].find(s => !String(s.className).includes('rounded-full')); return nameSpan ? nameSpan.textContent.trim() : ''; }";
   const chip = await evaluate(`(() => {
     const chipName = ${CHIP_NAME};
     const chips = [...document.querySelectorAll('button')].filter(b => {
       const s = b.querySelector('span.rounded-full');
       return s && /^\\d+$/.test(s.textContent.trim()) && b.getBoundingClientRect().width > 0;
     });
-    const target = chips.find(b => !/^All$/.test(chipName(b)));
+    // Skip the "All Items" / "All" reset chip — we need a REAL category.
+    const target = chips.find(b => !/^All( +Items)?$/i.test(chipName(b)));
     if (!target) return null;
     target.scrollIntoView({ block: 'center', inline: 'center' });
     return { name: chipName(target), count: Number(target.querySelector('span.rounded-full').textContent.trim()) };
@@ -308,6 +322,9 @@ async function exerciseMenu() {
     const clickedChip = await trustedClickExpr(`(() => {
       const chipName = ${CHIP_NAME};
       return [...document.querySelectorAll('button')].find(b => {
+        // Only the VISIBLE chip (sidebar at md+, strip below) is clickable —
+        // the other layout's copy is in the DOM but has zero size.
+        if (b.getBoundingClientRect().width === 0) return false;
         const s = b.querySelector('span.rounded-full');
         if (!s || !/^\\d+$/.test(s.textContent.trim())) return false;
         return chipName(b) === ${JSON.stringify(name)};
@@ -337,7 +354,7 @@ async function exerciseMenu() {
     return name ? name.slice(0, Math.min(5, name.length)) : '';
   })()`);
   const typed = await evaluate(`(() => {
-    const el = document.querySelector('input[placeholder="Search dishes, categories..."]');
+    const el = document.querySelector('input[aria-label="Search the whole menu"]');
     if (!el) return false;
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
     setter.call(el, ${JSON.stringify(query)});
@@ -356,7 +373,7 @@ async function exerciseMenu() {
 
   // Clear the search and add a quantity of the first item.
   await evaluate(`(() => {
-    const el = document.querySelector('input[placeholder="Search dishes, categories..."]');
+    const el = document.querySelector('input[aria-label="Search the whole menu"]');
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
     setter.call(el, '');
     el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -477,7 +494,7 @@ async function submitOrder(tableInfo, menuInfo, expectedGuests) {
   await sleep(2500);
   const BOARD_STATE = `(() => ({
     onBoard: document.body.innerText.includes('Restaurant Floors & Tables'),
-    wizardGone: !document.querySelector('input[placeholder="Search dishes, categories..."]'),
+    wizardGone: !document.querySelector('input[aria-label="Search the whole menu"]'),
     bodyUnlocked: document.body.style.overflow !== 'hidden' && document.documentElement.style.overflow !== 'hidden',
     occupied: /Occupied/.test(document.body.innerText),
   }))()`;
@@ -549,14 +566,14 @@ async function readNewTargetText() {
 /** The new in-page exit affordance (used at tablet/mobile widths). */
 async function assertExitBackToBoard(viewportName) {
   section(`${viewportName} — leaving the table order returns to the board`);
-  const onWizard = await evaluate(`!!document.querySelector('input[placeholder="Search dishes, categories..."]')`);
+  const onWizard = await evaluate(`!!document.querySelector('input[aria-label="Search the whole menu"]')`);
   check(onWizard, 'still on the order screen (menu visible)');
   const exited = await trustedClickExpr(`document.querySelector('button[aria-label="Exit table order"]')`);
   check(exited, 'the order screen offers an explicit exit control');
   await sleep(2200);
   const state = await evaluate(`(() => ({
     onBoard: document.body.innerText.includes('Restaurant Floors & Tables'),
-    wizardGone: !document.querySelector('input[placeholder="Search dishes, categories..."]'),
+    wizardGone: !document.querySelector('input[aria-label="Search the whole menu"]'),
     bodyUnlocked: document.body.style.overflow !== 'hidden' && document.documentElement.style.overflow !== 'hidden',
     stillHandedOver: !!document.body.innerText.match(/Review Order/),
   }))()`);
@@ -588,6 +605,17 @@ for (const vp of [
   await sleep(700);
   const table = await openTableAndAssertInlineMenu(vp.name);
   if (!table) continue;
+  // The category survives a refresh in sessionStorage, so a previous section
+  // may have left a one-item category selected — that menu legitimately fits
+  // without scrolling. Reset to All Items so the scroll surface is measured on
+  // the full menu, which is what this check is about.
+  await evaluate(`(() => {
+    const tab = [...document.querySelectorAll('[role="tab"]')]
+      .find(t => t.offsetParent !== null && /^All Items/.test(t.textContent.trim()));
+    if (tab) tab.click();
+    return true;
+  })()`);
+  await sleep(900);
   const scroll = await evaluate(`(() => {
     const scrollers = [...document.querySelectorAll('*')].filter(e => {
       const s = getComputedStyle(e);
@@ -658,7 +686,7 @@ async function assertTableSelectionSameScreen() {
   const after = await evaluate(`(() => {
     const badge = [...document.querySelectorAll('span')].find(s => /^Table /.test(s.textContent.trim()) && s.getAttribute('title'));
     return {
-      menu: !!document.querySelector('input[placeholder="Search dishes, categories..."]'),
+      menu: !!document.querySelector('input[aria-label="Search the whole menu"]'),
       badge: badge ? badge.textContent.trim() : null,
       onBoard: document.body.textContent.includes('Restaurant Floors & Tables'),
       overlays: [...document.querySelectorAll('div')].filter(d => String(d.className || '').includes('z-[90]')).length,

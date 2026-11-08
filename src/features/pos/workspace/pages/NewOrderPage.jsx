@@ -26,8 +26,12 @@ import { useSettingsStore, useUiStore } from '../../../../store';
  * state manipulation is needed.
  */
 export default function NewOrderPage() {
+  // Same three gates as the wizard/workspace — an explicit business-type
+  // capability (retail catalogue only), the plan entitlement and the tenant
+  // toggle. A restaurant can never enter Counter Scan mode.
   const scanMode =
     useSettingsStore((s) => s.barcodeScannerAvailable) === true &&
+    useSettingsStore((s) => s.barcodeScannerSupported) === true &&
     useSettingsStore((s) => s.settings?.barcodeScannerEnabled) === true;
 
   // A table being opened (pendingTable) or an existing order being extended

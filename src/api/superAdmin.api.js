@@ -1,6 +1,24 @@
 import apiClient from './axios';
 
 export const superAdminApi = {
+  // ─── Products ────────────────────────────────────────────────
+  getProducts: () =>
+    apiClient.get('/super-admin/products'),
+  createProduct: (data) =>
+    apiClient.post('/super-admin/products', data),
+  updateProduct: (id, data) =>
+    apiClient.put(`/super-admin/products/${id}`, data),
+  toggleProductStatus: (id) =>
+    apiClient.patch(`/super-admin/products/${id}/toggle`),
+  deleteProduct: (id) =>
+    apiClient.delete(`/super-admin/products/${id}`),
+  uploadProductLogo: (id, formData) =>
+    apiClient.post(`/super-admin/products/${id}/logo`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+  removeProductLogo: (id) =>
+    apiClient.delete(`/super-admin/products/${id}/logo`),
+
   // ─── Dashboard ───────────────────────────────────────────────
   getDashboard: () =>
     apiClient.get('/super-admin/dashboard'),

@@ -129,8 +129,8 @@ export default function ManagementReports({ dailyClosing, restaurantPerformance,
                       { label: 'Completed', value: dcKitchen.completed || 0 },
                       { label: 'Pending', value: dcKitchen.pending || 0 },
                       { label: 'Cancelled', value: dcKitchen.cancelled || 0 },
-                    ].map((k, i) => (
-                      <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-100 text-center">
+                    ].map((k) => (
+                      <div key={k.label} className="bg-slate-50 rounded-xl p-2.5 border border-slate-100 text-center">
                         <p className="text-[9px] font-bold uppercase text-slate-400">{k.label}</p>
                         <p className="text-sm font-extrabold text-slate-800">{k.value}</p>
                       </div>
@@ -145,7 +145,7 @@ export default function ManagementReports({ dailyClosing, restaurantPerformance,
                   <h4 className="text-[10px] font-extrabold text-slate-800 uppercase tracking-wider mb-3">Top Items Today</h4>
                   <div className="space-y-1.5">
                     {dcTopItems.slice(0, 5).map((item, i) => (
-                      <div key={i} className="flex items-center justify-between bg-slate-50 rounded-lg p-2 border border-slate-100">
+                      <div key={item.menuItemId || item.id || item.name || `top-item-${i}`} className="flex items-center justify-between bg-slate-50 rounded-lg p-2 border border-slate-100">
                         <div className="flex items-center gap-2">
                           <span className="text-[9px] font-bold text-slate-400 w-4">{i + 1}.</span>
                           <span className="text-[10px] font-bold text-slate-700">{item.name}</span>
@@ -199,7 +199,7 @@ export default function ManagementReports({ dailyClosing, restaurantPerformance,
                   <h4 className="text-[10px] font-extrabold text-slate-800 uppercase tracking-wider mb-3">Category Performance</h4>
                   <div className="space-y-1.5">
                     {perfCategoryPerformance.slice(0, 8).map((cat, i) => (
-                      <div key={i} className="flex items-center justify-between bg-slate-50 rounded-lg p-2 border border-slate-100">
+                      <div key={cat.categoryId || cat.id || cat.categoryName || `category-${i}`} className="flex items-center justify-between bg-slate-50 rounded-lg p-2 border border-slate-100">
                         <span className="text-[10px] font-bold text-slate-700">{cat.categoryName}</span>
                         <div className="flex items-center gap-3">
                           <span className="text-[9px] font-mono text-slate-500">{cat.quantitySold} sold</span>

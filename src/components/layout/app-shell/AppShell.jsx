@@ -3,7 +3,7 @@ import { Loader2 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import Sidebar from '../sidebar/Sidebar';
 import Header from '../header/Header';
-import { useAuthStore, useUiStore, useSettingsStore, useCartStore } from '../../../store';
+import { useAuthStore, useUiStore, useSettingsStore, useCartStore, useTenantStore } from '../../../store';
 import LoginPage from '../../../features/auth/pages/LoginPage';
 import ForceChangePasswordPage from '../../../features/auth/pages/ForceChangePasswordPage';
 import SetPasswordPage, { getPasswordSetupParams } from '../../../features/auth/pages/SetPasswordPage';
@@ -15,6 +15,7 @@ import PosWorkspace from '../../../features/pos/workspace/pages/PosWorkspace';
 import NewOrderPage from '../../../features/pos/workspace/pages/NewOrderPage';
 import TakeOrderWizard from '../../../features/pos/workspace/components/TakeOrderWizard';
 import ErrorBoundary from '../../common/ErrorBoundary';
+import BrandLogo from '../../common/BrandLogo';
 import { AlertTriangle, X, CheckCircle2, ShieldAlert } from 'lucide-react';
 import { canAccessScreen, getDefaultScreenForRole, SCREEN_FEATURES, hasFeature, isScreenAllowedForBusinessMode, getRoleDisplayName } from '../../../utils/permissions';
 import { getBusinessCapabilities, isBasicPosFoodBusiness, isBasicPosProductionMode } from '../../../utils/businessCapabilities';
@@ -264,10 +265,21 @@ export default function AppShell() {
   // Read once from the URL; cleared on completion so a refresh returns to login.
   const [passwordSetup, setPasswordSetup] = useState(() => getPasswordSetupParams());
 
-  const { currentScreen, setScreen } = useUiStore();
+  const { currentScreen, setScreen, activeOrderTakingId, pendingTable } = useUiStore();
   const { user, subscription, onboarding, isUnlocked, isAuthenticated, sessionReady, restoreSession } = useAuthStore();
   const { settings, lastFetched, fetchSettings, moduleVisibilityVersion } = useSettingsStore();
   const { toasts, apiError, clearApiError } = useUiStore();
+
+  // ── Order-entry handoff ──
+  // A table opened from Floors & Tables, or an Add-Item session started from
+  // Active Orders, is ordered on the POS Ordering screen (`new_order`), which
+  // renders the SAME page-mode wizard. That handoff is valid in every business
+  // mode — the mode rule below would otherwise bounce a counter/basic-POS
+  // handoff straight to Dashboard before the user could add a single item.
+  const handoffActive = !!(activeOrderTakingId || pendingTable);
+  const modeAllowsScreen = (screen) =>
+    isScreenAllowedForBusinessMode(screen, settings?.businessMode) ||
+    (screen === 'new_order' && handoffActive);
 
   // ── Cross-restaurant cache safety ──
   // React Query caches fetched tenant data in memory. When a session ends (logout,
@@ -292,12 +304,53 @@ export default function AppShell() {
     restoreSession();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Workspace (subdomain) identity ──
+  // Resolved once per page load; the API client already sends the hostname
+  // hint synchronously, this adds the UI-level guard below.
+  const tenantStatus = useTenantStore((s) => s.status);
+  const tenant = useTenantStore((s) => s.tenant);
+  const tenantErrorCode = useTenantStore((s) => s.errorCode);
+  const loadTenant = useTenantStore((s) => s.loadTenant);
+  useEffect(() => { loadTenant(); }, [loadTenant]);
+
+  // A session minted for restaurant A must never stay open on restaurant B's
+  // workspace. The backend already refuses the API calls; log the browser out
+  // so the UI matches that decision.
+  useEffect(() => {
+    if (tenantStatus !== 'ready' || !tenant || !user) return;
+    if (user.role === 'SUPER_ADMIN') return;
+    if (Number(user.restaurantId) !== Number(tenant.id)) {
+      useUiStore.getState().setLoginNotice(
+        `This account does not belong to the ${tenant.name} workspace.`
+      );
+      useAuthStore.getState().logout();
+      useUiStore.getState().setScreen('login');
+    }
+  }, [tenantStatus, tenant, user]);
+
+  // A workspace the server explicitly rejected (unknown / inactive) has no
+  // valid scope — drop any stored session. Network failures are NOT treated as
+  // a logout; the app keeps working with its cached session.
+  useEffect(() => {
+    const rejectedWorkspace =
+      tenantErrorCode === 'TENANT_NOT_FOUND' ||
+      tenantErrorCode === 'TENANT_INACTIVE' ||
+      tenantErrorCode === 'TENANT_INVALID';
+    if (rejectedWorkspace && isAuthenticated) {
+      useAuthStore.getState().logout();
+      useUiStore.getState().setScreen('login');
+    }
+  }, [tenantErrorCode, isAuthenticated]);
+
   // ── Global session-expiry handler ──
   // The API client fires 'pos:session-expired' once when any protected request
   // returns 401 (stale/invalid token). We log out and land on the login screen
   // — no infinite retry loop, no repeated /api/auth/login calls.
   useEffect(() => {
     const handleSessionExpired = () => {
+      // Only a real 401 reaches this event (axios filters login attempts and
+      // other HTTP errors), and the user is told WHY they are back at login.
+      useUiStore.getState().setLoginNotice('Your session expired. Please sign in again.');
       useAuthStore.getState().logout();
       useUiStore.getState().setScreen('login');
     };
@@ -308,7 +361,7 @@ export default function AppShell() {
   // ── Auto-load restaurant settings ONCE the session is known to be an ACTIVE
   // POS account. Onboarding applicants (restaurant not ACTIVE yet) must never
   // call POS-protected endpoints, so they are skipped here — their settings
-  // load on “Enter KlarGo POS” after activation.
+  // load on “Enter QWIKOUT POS” after activation.
   // The restaurant settings snapshot (branding, modules, capabilities) belongs
   // to ONE account. Tracking the account it was loaded for means a logout/login
   // switch — or a different user in the same browser — always reloads from the
@@ -373,7 +426,17 @@ export default function AppShell() {
       if (userRole === 'SUPER_ADMIN' && isSuperAdminScreen(currentScreen)) {
         return; // Allow all super admin screens
       }
-      
+
+      // ── Settings-readiness gate ──
+      // The settings store starts from DEFAULTS (restaurant mode, all modules
+      // ON) and is replaced by the tenant snapshot when the settings request
+      // resolves. Running the module/mode checks on those defaults used to
+      // redirect an already-open screen to Dashboard as soon as the guard
+      // re-evaluated — the intermittent "jumped to Dashboard" symptom. Wait
+      // for ONE real snapshot before redirecting anything; the backend still
+      // enforces every rule meanwhile.
+      if (!lastFetched) return;
+
       // Check role permission
       if (!canAccessScreen(userRole, currentScreen)) {
         const bestScreen = findBestAvailableScreen(settings, userRole, subscription);
@@ -381,7 +444,7 @@ export default function AppShell() {
         return;
       }
       // Check business-mode applicability (e.g. POS Ordering blocked in Restaurant mode)
-      if (!isScreenAllowedForBusinessMode(currentScreen, settings?.businessMode)) {
+      if (!modeAllowsScreen(currentScreen)) {
         const bestScreen = findBestAvailableScreen(settings, userRole, subscription);
         setScreen(bestScreen);
         return;
@@ -433,7 +496,7 @@ export default function AppShell() {
         setScreen(bestScreen);
       }
     }
-  }, [currentScreen, isAuthenticated, isUnlocked, user, subscription, setScreen, settings, moduleVisibilityVersion]);
+  }, [currentScreen, isAuthenticated, isUnlocked, user, subscription, setScreen, settings, moduleVisibilityVersion, lastFetched, activeOrderTakingId, pendingTable]);
 
   // ── Expired-subscription guard (server-side enforcement, mirrored in the UI):
   // when the subscription is expired the POS is locked. The ADMIN is kept on
@@ -475,7 +538,8 @@ export default function AppShell() {
     return (
       <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center">
         <div className="text-center">
-          <Loader2 className="w-8 h-8 animate-spin text-[#16A34A] mx-auto mb-3" />
+          <BrandLogo priority className="mx-auto mb-5 h-12 w-[164px]" />
+          <Loader2 className="w-8 h-8 animate-spin text-emerald-600 mx-auto mb-3" />
           <p className="text-xs font-semibold text-slate-400">Restoring session...</p>
         </div>
       </div>
@@ -525,9 +589,14 @@ export default function AppShell() {
   // SUPER_ADMIN screens are always allowed for SUPER_ADMIN role
   const isSuperAdminRouting = isSuperAdmin && isSuperAdminScreen(currentScreen);
   // expired_locked is a system screen (not role-gated) — allowed for anyone
+  // Business-mode applicability is only trustworthy once a real tenant
+  // snapshot has loaded (the store starts in the default 'restaurant' mode).
+  // Until then the role check alone decides, so a screen is never replaced by
+  // Access Denied / Dashboard purely because settings are still in flight.
+  const settingsSettled = !!lastFetched;
   const isScreenAllowed = isSuperAdminRouting || currentScreen === 'expired_locked' || (
     canAccessScreen(userRole, currentScreen) &&
-    isScreenAllowedForBusinessMode(currentScreen, settings?.businessMode)
+    (settingsSettled ? modeAllowsScreen(currentScreen) : true)
   );
   // Also check module visibility (e.g. order_taking blocked when enablePosOrdering=false)
   const moduleSettingKey = SCREEN_TO_SETTING[currentScreen];
@@ -571,8 +640,10 @@ export default function AppShell() {
         <Header />
         <main className="flex-1 p-3 sm:p-5 overflow-y-auto bg-[#F8FAFC]">
           {/* Lazy screens render inside ErrorBoundary so a chunk-load failure
-              never blanks the app — it falls back to the error state. */}
-          <ErrorBoundary>
+              never blanks the app — it falls back to the error state. The
+              boundary is keyed by the active screen so a crashed screen is
+              discarded on navigation instead of poisoning every other page. */}
+          <ErrorBoundary key={currentScreen}>
             <Suspense fallback={<ScreenFallback />}>
               <ScreenComponent />
             </Suspense>

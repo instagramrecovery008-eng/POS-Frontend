@@ -2,7 +2,7 @@
  * Product-list helpers for the login page's "Our Products" section.
  *
  * The public registry (Super-Admin managed) and the configured fallback can
- * legitimately contain the same product — KlarGo POS is both the current
+ * legitimately contain the same product — QWIKOUT POS is both the current
  * product and the first catalogue entry. The same product must appear exactly
  * once, matched on a STABLE key (slug → id → name), never on display copy.
  */

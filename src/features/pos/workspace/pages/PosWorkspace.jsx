@@ -9,7 +9,8 @@ import { getBusinessCapabilities, isBasicPosProductionMode } from '../../../../u
 import { menuApi } from '../../../../api/menu.api';
 import { categoryApi } from '../../../../api/category.api';
 import { orderApi } from '../../../../api/order.api';
-import { openKotPrintPreview } from '../../../../services/printService';
+import { dispatchKotPrint } from '../../../../services/kotPrintService';
+import { openKotPrintWindow, closeKotPrintWindow } from '../../../../services/printService';
 import { useSocketEvent } from '../../../../hooks/useSocket';
 import { PLACEHOLDER_IMAGE } from '../../../../lib/imagePlaceholder';
 import { canHandleBilling } from '../../../../utils/permissions';
@@ -96,9 +97,18 @@ export default function PosWorkspace() {
   // as the full POS wizard: plan includes barcode_scanner AND the restaurant
   // toggle is ON. When ON, the workspace switches ENTIRELY to Counter Scan
   // mode: no category cards, no subcategory tabs, no item grid.
+  // Business-type gate must be an explicit `true` (retail catalogue only): a
+  // restaurant resolves false, and an unresolved capability never turns the
+  // scanner on. Manual search/ordering below is unaffected.
   const canScanBarcode =
     useSettingsStore((s) => s.barcodeScannerAvailable) === true &&
+    useSettingsStore((s) => s.barcodeScannerSupported) === true &&
     useSettingsStore((s) => s.settings?.barcodeScannerEnabled) === true;
+  const printerConfigured = useSettingsStore((s) => s.printerConfigured) !== false;
+  // KOT is a business capability, independent of the "Enable Kitchen (KOT)"
+  // screen toggle — the print window must be prepared for every order that can
+  // produce a ticket.
+  const kotCapable = (settings?.capabilities || {}).kot === true;
   const scanMode = canScanBarcode; // dedicated Counter Scan screen replaces the category/item UI
   const scannerInputRef = useRef(null);
   const [scanError, setScanError] = useState(null); // { barcode } of the last failed scan
@@ -278,33 +288,52 @@ export default function PosWorkspace() {
   // it in the create-order response (order.kot[0]) — printing uses that
   // directly, so no second KOT-create request is made (a second call would
   // hit NO_PENDING_ITEMS and return created:false, silently skipping print).
-  const printCounterKot = async (order, itemsPayload) => {
+  const printCounterKot = async (order, itemsPayload, kotPrintWindow = null) => {
     try {
       const autoKot = (order.kot || [])[0] || null;
-      if (!autoKot?.kotNo) return; // defensive: no auto-KOT on the response
-      openKotPrintPreview({
-        restaurantName: settings?.branding?.restaurantName || '',
-        kotNo: autoKot.kotNo,
-        orderNo: order.orderNo || String(order.id),
-        tableNo: '', // counter order — never a table number
-        orderType: order.orderType || 'COUNTER_SALE',
-        waiterName: user?.name || '',
-        customerName: customerName || '',
-        customerPhone: customerPhone || '',
-        guestCount: 1,
-        notes: '',
-        items: (order.orderItems || []).map((oi) => ({
-          name: oi.menuItem?.name || `Item #${oi.menuItemId}`,
-          quantity: oi.quantity,
-          notes: oi.notes || '',
-          dietaryType: oi.dietaryType || oi.menuItem?.dietaryType || null,
-        })),
-        footer: settings?.receiptFooterMessage || 'Thank You!',
-        date: new Date(),
+      if (!autoKot?.kotNo) {
+        closeKotPrintWindow(kotPrintWindow);
+        return; // defensive: no auto-KOT on the response
+      }
+      // Dispatch through the shared service so the print job is RECORDED
+      // (DISPATCHED / FAILED) instead of only opening a window — a counter
+      // order's ticket is retriable and a failed print is visible in the
+      // Kitchen Tickets screen.
+      const result = await dispatchKotPrint({
+        kot: autoKot,
+        printerConfigured,
+        printWindow: kotPrintWindow,
+        printData: {
+          restaurantName: settings?.branding?.restaurantName || '',
+          kotNo: autoKot.kotNo,
+          orderNo: order.orderNo || String(order.id),
+          tableNo: '', // counter order — never a table number
+          orderType: order.orderType || 'COUNTER_SALE',
+          waiterName: user?.name || '',
+          customerName: customerName || '',
+          customerPhone: customerPhone || '',
+          guestCount: 1,
+          notes: '',
+          items: (order.orderItems || []).map((oi) => ({
+            name: oi.menuItem?.name || `Item #${oi.menuItemId}`,
+            quantity: oi.quantity,
+            notes: oi.notes || '',
+            dietaryType: oi.dietaryType || oi.menuItem?.dietaryType || null,
+          })),
+          footer: settings?.receiptFooterMessage || 'Thank You!',
+          date: new Date(),
+        },
       });
+      if (result.dispatched && result.needsConfiguration) {
+        addToast(`KOT ${autoKot.kotNo} sent to the system printer. ${result.warning || ''}`.trim(), 'warning');
+      } else if (!result.dispatched) {
+        addToast(`KOT ${autoKot.kotNo} created but NOT printed: ${result.error || 'print unavailable'}`, 'error');
+      }
+      if (!result.dispatched) closeKotPrintWindow(kotPrintWindow);
     } catch (e) {
       // The auto-KOT is created server-side on order creation; a manual KOT
       // attempt failing (e.g. NO_PENDING_ITEMS race) must not fail the order.
+      closeKotPrintWindow(kotPrintWindow);
       console.warn('[BASIC_POS] KOT print skipped:', e?.message);
     }
   };
@@ -312,6 +341,12 @@ export default function PosWorkspace() {
   const handlePlaceOrder = async () => {
     if (cartItems.length === 0 || submitting) return;
     setSubmitting('place');
+    // Kitchen flows open the print window in the click gesture — opening it
+    // after the order/KOT requests are blocked by the browser. Any KOT-capable
+    // tenant can receive a ticket (dine-in/takeaway/delivery), so the window is
+    // prepared from the BUSINESS CAPABILITY (never the Kitchen screen toggle);
+    // it is closed again if the order response carries no KOT.
+    const kotPrintWindow = (isBasicPosProduction || isBasicPos || kotCapable) ? openKotPrintWindow() : null;
     try {
       const itemsPayload = cartItems.map((c) => ({
         menuItemId: parseInt(c.itemId.replace('menu-', '')),
@@ -333,8 +368,13 @@ export default function PosWorkspace() {
       // quick-billing mode (Quick Billing ON / retail). COUNTER_SALE alone
       // must never determine whether payment opens.
       const order = resp.data;
+      // Print whichever kitchen ticket the backend actually created for THIS
+      // order — independent of which screen placed it. Retail orders carry no
+      // KOT, so nothing is printed for them.
+      const autoKot = (order.kot || [])[0] || null;
+      if (!autoKot?.kotNo) closeKotPrintWindow(kotPrintWindow);
       if (isBasicPosProduction) {
-        await printCounterKot(order, itemsPayload);
+        if (autoKot?.kotNo) await printCounterKot(order, itemsPayload, kotPrintWindow);
         addToast(`Order #${order.orderNo || order.id} sent to kitchen.`, 'success');
         setCartItems([]);
         incrementRefreshTrigger(); // Active Orders re-fetches on next open
@@ -347,9 +387,13 @@ export default function PosWorkspace() {
           // compatibility, though the centralized predicate normally routes
           // here only when Quick Billing is ON (direct payment later in
           // handlePayment).
-          await printCounterKot(order, itemsPayload);
+          if (autoKot?.kotNo) await printCounterKot(order, itemsPayload, kotPrintWindow);
           addToast(`Order #${order.orderNo || order.id} sent to kitchen!`, 'success');
         } else {
+          // Restaurant delivery/takeaway placed from the counter screen: the
+          // backend created a KOT, so dispatch ITS ticket too (previously this
+          // branch printed nothing and the ticket stayed unprinted).
+          if (autoKot?.kotNo) await printCounterKot(order, itemsPayload, kotPrintWindow);
           useCartStore.getState().addOrder({
             id: `ord-${order.id}`,
             orderNumber: `#${order.orderNo || order.id}`,
@@ -371,6 +415,7 @@ export default function PosWorkspace() {
         setScreen('dashboard');
       }
     } catch (e) {
+      closeKotPrintWindow(kotPrintWindow);
       addToast(e.message || 'Failed to place order', 'error');
       console.error('Order creation error:', e);
     } finally {

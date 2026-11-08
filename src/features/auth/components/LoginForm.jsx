@@ -88,8 +88,8 @@ export default function LoginForm({ onSubmit, loading, error, rememberMe, onReme
         spellCheck={false}
         disabled={loading}
         error={fieldErrors.userId}
-        icon={<Mail className="h-4 w-4" />}
-        className="h-11 text-sm"
+        icon={<Mail className="h-4 w-4 text-[#0866E8]/70" />}
+        className="h-11 text-sm focus:border-[#0866E8] focus:ring-2 focus:ring-[#08B9F5]/25"
       />
 
       <div className="space-y-1">
@@ -100,7 +100,7 @@ export default function LoginForm({ onSubmit, loading, error, rememberMe, onReme
           Password
         </label>
         <div className="relative">
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[#0866E8]/70">
             <Lock className="h-4 w-4" />
           </span>
           <input
@@ -117,7 +117,7 @@ export default function LoginForm({ onSubmit, loading, error, rememberMe, onReme
             autoComplete="current-password"
             disabled={loading}
             aria-invalid={!!fieldErrors.password}
-            className={`h-11 w-full rounded-xl border bg-slate-50 pl-9 pr-11 text-sm font-semibold text-slate-800 outline-none transition-all placeholder:font-medium placeholder:text-slate-400 hover:border-slate-300 focus:border-[#16A34A] focus:bg-white focus:ring-2 focus:ring-[#16A34A]/20 disabled:opacity-60 ${
+            className={`h-11 w-full rounded-xl border bg-slate-50 pl-9 pr-11 text-sm font-semibold text-slate-800 outline-none transition-all placeholder:font-medium placeholder:text-slate-400 hover:border-slate-300 focus:border-[#0866E8] focus:bg-white focus:ring-2 focus:ring-[#08B9F5]/25 disabled:opacity-60 ${
               fieldErrors.password ? 'border-red-300 bg-red-50 focus:border-red-500 focus:ring-red-500/20' : 'border-slate-200'
             }`}
           />
@@ -141,25 +141,27 @@ export default function LoginForm({ onSubmit, loading, error, rememberMe, onReme
 
       {/* Remember Me — where the session lives (localStorage vs sessionStorage);
           never extends JWT validity and never stores the password. */}
-      <label
-        htmlFor="remember-me"
-        className="flex cursor-pointer select-none items-center gap-2.5"
-      >
-        <input
-          id="remember-me"
-          type="checkbox"
-          checked={!!rememberMe}
-          onChange={(e) => onRememberChange && onRememberChange(e.target.checked)}
-          disabled={loading}
-          className="h-4 w-4 shrink-0 cursor-pointer rounded border-slate-300 text-[#16A34A] accent-[#16A34A] focus:outline-none focus:ring-2 focus:ring-[#16A34A]/30"
-        />
-        <span className="text-xs font-semibold text-slate-600">Remember Me</span>
-      </label>
+      <div className="flex flex-wrap items-center gap-2">
+        <label
+          htmlFor="remember-me"
+          className="flex cursor-pointer select-none items-center gap-2.5"
+        >
+          <input
+            id="remember-me"
+            type="checkbox"
+            checked={!!rememberMe}
+            onChange={(e) => onRememberChange && onRememberChange(e.target.checked)}
+            disabled={loading}
+            className="h-4 w-4 shrink-0 cursor-pointer rounded border-slate-300 text-[#0866E8] accent-[#0866E8] focus:outline-none focus:ring-2 focus:ring-[#08B9F5]/30"
+          />
+          <span className="text-xs font-semibold text-slate-600">Remember Me</span>
+        </label>
+      </div>
 
       <button
         type="submit"
         disabled={loading}
-        className="group mt-1 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#16A34A] text-sm font-bold uppercase tracking-wider text-white shadow-sm transition-all hover:bg-[#15803D] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#16A34A]/30 focus:ring-offset-1 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+        className="group mt-1 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#0866E8] to-[#9228F5] text-sm font-bold uppercase tracking-wider text-white shadow-sm transition-all hover:from-[#123EAA] hover:to-[#6415C9] hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-[#08B9F5]/45 focus-visible:ring-offset-1 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
       >
         {loading ? (
           <>

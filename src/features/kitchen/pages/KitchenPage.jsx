@@ -1,8 +1,12 @@
-import React, { useState, useCallback } from 'react';
-import { Search, Clock, Check, Ban, RefreshCw, Loader2 } from 'lucide-react';
+import React, { useState, useCallback, useRef } from 'react';
+import { Search, Clock, Check, Ban, RefreshCw, Loader2, Printer, AlertTriangle } from 'lucide-react';
 import kotApi from '../../../api/kot.api';
 import { useSocketEvent } from '../../../hooks/useSocket';
 import { KOT_TABS, groupKotsByTab } from '../../../utils/kotTabs';
+import VoidKotModal from '../components/VoidKotModal';
+import KotPrinterStatus from '../components/KotPrinterStatus';
+import { dispatchKotPrint } from '../../../services/kotPrintService';
+import { useUiStore, useSettingsStore } from '../../../store';
 
 // The Kitchen Tickets screen is the PRODUCTION surface only: it shows tickets
 // and their kitchen status. Checkout/billing lives exclusively on the
@@ -17,16 +21,36 @@ export default function KitchenPage() {
   const [activeTab, setActiveTab] = useState('Active');
   const [busyAction, setBusyAction] = useState(null); // 'void' | 'status' | null — prevents duplicate API calls
 
+  // ── Void Ticket modal state ──
+  // The void is ALWAYS two-step: the modal collects + confirms the reason, and
+  // only its confirm handler talks to the API. Nothing is voided on the click
+  // that opens it.
+  const [showVoidModal, setShowVoidModal] = useState(false);
+  const [voidSubmitting, setVoidSubmitting] = useState(false);
+
+  const addToast = useUiStore((s) => s.addToast);
+  const setScreen = useUiStore((s) => s.setScreen);
+  const setSettingsSection = useUiStore((s) => s.setSettingsSection);
+  const printerConfigured = useSettingsStore((s) => s.printerConfigured) !== false;
+  const settingsLoaded = useSettingsStore((s) => s.lastFetched != null);
+
+  // Polling refreshes DATA ONLY: it never navigates, reloads the page or resets
+  // the current tab/search/selected ticket. Stale responses are discarded.
+  const kotRequestSeqRef = useRef(0);
   const fetchKots = useCallback(async () => {
+    const seq = ++kotRequestSeqRef.current;
     try {
       const res = await kotApi.getAll();
+      if (seq !== kotRequestSeqRef.current) return; // stale response
       setKots(res?.data || []);
       setError(null);
     } catch (err) {
+      if (seq !== kotRequestSeqRef.current) return; // stale failure
       console.error('Failed to fetch KOTs:', err);
-      setError('Unable to load kitchen tickets. Retrying...');
+      // Non-blocking: the current screen stays visible with its last data.
+      setError('Unable to refresh kitchen tickets. Showing the last loaded data.');
     } finally {
-      setLoading(false);
+      if (seq === kotRequestSeqRef.current) setLoading(false);
     }
   }, []);
 
@@ -58,6 +82,16 @@ export default function KitchenPage() {
     event: 'kot:cancelled',
     handler: (data) => {
       setKots((prev) => prev.filter((k) => k.id !== data.kot?.id));
+      setLoading(false);
+    },
+  });
+
+  // Print lifecycle: the POS client reports dispatch/failure per ticket. Keep
+  // the badge in sync without a full refetch, then verify against the server.
+  useSocketEvent({
+    event: 'kot:print',
+    handler: (data) => {
+      setKots((prev) => prev.map((k) => (k.id === data.kot?.id ? { ...k, ...data.kot } : k)));
       setLoading(false);
     },
   });
@@ -121,14 +155,84 @@ export default function KitchenPage() {
     }
   };
 
-  const handleVoidKot = async (kotId) => {
-    if (busyAction) return;
+  const handleVoidKotOpen = () => {
+    if (busyAction || !selectedKot) return;
+    setShowVoidModal(true);
+  };
+
+  const handleVoidModalClose = () => {
+    if (voidSubmitting) return; // never discard an in-flight void
+    setShowVoidModal(false);
+  };
+
+  // Confirm handler — receives { reason, reasonCode, reasonDetail } from the
+  // modal. Both a user-readable reason and the structured code are sent; the
+  // backend re-validates them (cancelKOTSchema) and records the audit trail.
+  const handleVoidKotConfirm = async ({ reason, reasonCode, reasonDetail }) => {
+    if (voidSubmitting || !selectedKot) return;
+    const kotId = selectedKot.id;
+    setVoidSubmitting(true);
     setBusyAction('void');
     try {
-      await kotApi.cancel(kotId, 'Voided from kitchen');
-      fetchKots();
+      await kotApi.cancel(kotId, reason, { reasonCode, reasonDetail });
+      setShowVoidModal(false);
+      setSelectedKotId(null);
+      addToast(
+        `KOT ${selectedKot.kotNo} voided — removed from active kitchen work.`,
+        'success'
+      );
+      // Refresh BOTH surfaces: this screen's list, and (via the socket event
+      // the backend emits) Active Orders + order details elsewhere.
+      await fetchKots();
     } catch (err) {
-      console.error('Failed to void KOT:', err);
+      const msg = err?.message || 'Failed to void KOT';
+      addToast(msg, 'error');
+      setError(msg);
+    } finally {
+      setVoidSubmitting(false);
+      setBusyAction(null);
+    }
+  };
+
+  // ── Print / retry a ticket's print job ──
+  // Reuses the shared dispatch service: opens the existing print preview and
+  // reports DISPATCHED/FAILED back to the API so the job is retryable.
+  const handlePrintKot = async (kot) => {
+    if (busyAction || !kot) return;
+    setBusyAction(`print-${kot.id}`);
+    try {
+      const result = await dispatchKotPrint({
+        kot,
+        manual: true,
+        printerConfigured,
+        printData: {
+          restaurantName: '',
+          kotNo: kot.kotNo || '',
+          orderNo: kot.order?.orderNo || String(kot.orderId || ''),
+          tableNo: kot.order?.table?.tableNo || '',
+          orderType: kot.order?.orderType || 'DINE_IN',
+          waiterName: kot.order?.user?.name || '',
+          customerName: kot.order?.customer?.name || '',
+          notes: kot.notes || '',
+          items: (kot.kotItems || []).map((ki) => ({
+            name: ki.menuItem?.name || 'Item',
+            quantity: ki.quantity || 1,
+            notes: ki.notes || '',
+            dietaryType: ki.menuItem?.dietaryType || null,
+          })),
+          date: kot.createdAt || new Date(),
+        },
+      });
+      if (result.dispatched && result.needsConfiguration) {
+        addToast(`KOT ${kot.kotNo} sent to the system printer. ${result.warning || ''}`.trim(), 'warning');
+      } else if (result.dispatched) {
+        addToast(`KOT ${kot.kotNo} sent to the printer.`, 'success');
+      } else {
+        addToast(result.error || 'KOT could not be printed.', 'error');
+      }
+      await fetchKots();
+    } catch (e) {
+      addToast(e?.message || 'Failed to print KOT', 'error');
     } finally {
       setBusyAction(null);
     }
@@ -170,7 +274,35 @@ export default function KitchenPage() {
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 animate-fade-in max-w-7xl mx-auto lg:h-[calc(100vh-80px)] lg:min-h-0">
+    <div className="flex flex-col gap-2 animate-fade-in max-w-7xl mx-auto min-h-0 lg:h-[calc(100vh-80px)]">
+      {/* Compact printer status panel — replaces the oversized warning banner.
+          One horizontal row on desktop (icon + status + description left,
+          Test Print / Configure right, wrapping on narrow screens). Kept OUTSIDE
+          the list grid so the KOT list and ticket details always fill the
+          remaining viewport height instead of being pushed down. */}
+      {settingsLoaded && (
+        <KotPrinterStatus
+          onConfigure={() => {
+            setSettingsSection('printer');
+            setScreen('settings');
+          }}
+        />
+      )}
+      {/* Non-blocking refresh error — the screen (and its selected ticket)
+          stays visible with the last loaded data; Retry refreshes in place. */}
+      {error && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+          <p className="min-w-0 flex-1 text-[9px] font-semibold leading-tight text-amber-800">{error}</p>
+          <button
+            onClick={fetchKots}
+            className="h-6 shrink-0 rounded-md border border-amber-300 bg-white px-2 text-[9px] font-extrabold uppercase tracking-wider text-amber-800 hover:bg-amber-100"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 flex-1 min-h-0">
       {/* Left Pane: KOT Ticket List */}
       <div className="lg:col-span-1 bg-white rounded-[18px] border border-slate-200 p-3.5 flex flex-col gap-3 lg:h-full min-h-0 shadow-xs">
         {/* Search */}
@@ -249,6 +381,19 @@ export default function KitchenPage() {
                   <span className="font-semibold">{(kot.kotItems?.length || 0)} item{(kot.kotItems?.length || 0) !== 1 ? 's' : ''}</span>
                   <span className="font-semibold">{kot.order?.orderType?.replace('_', ' ')}</span>
                 </div>
+                {/* TRUE print state, straight from the stored print job — a KOT
+                    row existing never implies it physically printed. */}
+                {kot.printJobStatus && kot.printJobStatus !== 'NONE' && (
+                  <span className={`self-start text-[8px] font-extrabold uppercase tracking-wider px-1.5 py-0.5 rounded border ${
+                    kot.printJobStatus === 'FAILED'
+                      ? 'bg-red-50 text-red-600 border-red-200'
+                      : kot.printJobStatus === 'PENDING'
+                        ? 'bg-amber-50 text-amber-700 border-amber-200'
+                        : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  }`}>
+                    {kot.printJobStatus === 'FAILED' ? 'Print failed' : kot.printJobStatus === 'PENDING' ? 'Not printed' : 'Sent to printer'}
+                  </span>
+                )}
               </div>
             );
           })}
@@ -346,15 +491,62 @@ export default function KitchenPage() {
 
             {/* Actions — fixed bottom bar, never scrolls */}
             <div className="pt-3.5 border-t border-slate-100 shrink-0 space-y-2.5">
+              {/* Print job status — creation ≠ dispatch ≠ physical print.
+                  A failed/pending job is VISIBLE and retryable here; a ticket
+                  whose job never dispatched can never look "printed". */}
+              {selectedKot.printJobStatus && selectedKot.printJobStatus !== 'NONE' && (
+                <div className={`flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 ${
+                  selectedKot.printJobStatus === 'FAILED'
+                    ? 'bg-red-50 border-red-200'
+                    : selectedKot.printJobStatus === 'PENDING'
+                      ? 'bg-amber-50 border-amber-200'
+                      : 'bg-emerald-50 border-emerald-200'
+                }`}>
+                  <div className="min-w-0">
+                    <p className={`text-[10px] font-extrabold uppercase tracking-wider flex items-center gap-1 ${
+                      selectedKot.printJobStatus === 'FAILED'
+                        ? 'text-red-700'
+                        : selectedKot.printJobStatus === 'PENDING'
+                          ? 'text-amber-700'
+                          : 'text-emerald-700'
+                    }`}>
+                      {selectedKot.printJobStatus === 'FAILED' && <AlertTriangle className="w-3 h-3" />}
+                      {selectedKot.printJobStatus === 'PENDING' && 'Not yet printed'}
+                      {selectedKot.printJobStatus === 'DISPATCHED' && 'Sent to printer'}
+                      {selectedKot.printJobStatus === 'FAILED' && 'Print failed'}
+                    </p>
+                    {selectedKot.printError && (
+                      <p className="text-[9px] text-red-600 font-semibold truncate mt-0.5">{selectedKot.printError}</p>
+                    )}
+                    {selectedKot.printJobStatus === 'PENDING' && !selectedKot.printError && (
+                      <button
+                        onClick={() => setScreen('settings')}
+                        className="text-[9px] font-bold text-amber-700 underline hover:text-amber-900 cursor-pointer"
+                      >
+                        Check printer settings
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => handlePrintKot(selectedKot)}
+                    disabled={!!busyAction || selectedKot.cancelledAt || selectedKot.status === 'CANCELLED'}
+                    className="h-8 px-3 text-[10px] font-bold bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg uppercase tracking-wider flex items-center gap-1 transition-all cursor-pointer disabled:opacity-50 shrink-0"
+                  >
+                    {busyAction === `print-${selectedKot.id}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Printer className="w-3 h-3" />}
+                    {selectedKot.printJobStatus === 'FAILED' ? 'Retry print' : 'Reprint'}
+                  </button>
+                </div>
+              )}
               <div className="flex flex-wrap gap-2 justify-between items-center">
                 <div className="flex gap-2">
                   <button
-                    onClick={() => handleVoidKot(selectedKot.id)}
-                    disabled={!!busyAction}
+                    onClick={handleVoidKotOpen}
+                    disabled={!!busyAction || selectedKot.cancelledAt || selectedKot.status === 'CANCELLED'}
+                    aria-haspopup="dialog"
                     className="h-10 px-3 text-[10px] font-bold bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 rounded-lg uppercase tracking-wider flex items-center gap-1 transition-all cursor-pointer disabled:opacity-50"
                   >
-                    {busyAction === 'void' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
-                    {busyAction === 'void' ? 'Voiding...' : 'Void Ticket'}
+                    <Ban className="w-3.5 h-3.5" />
+                    Void Ticket
                   </button>
                 </div>
                 <div>
@@ -379,6 +571,17 @@ export default function KitchenPage() {
           </div>
         )}
       </div>
+      </div>
+
+      {/* Void Ticket confirmation — collects + validates the reason, submits
+          only on Confirm. Cancel/backdrop/Escape leaves the ticket untouched. */}
+      <VoidKotModal
+        kot={showVoidModal ? selectedKot : null}
+        isOpen={showVoidModal}
+        onClose={handleVoidModalClose}
+        onConfirm={handleVoidKotConfirm}
+        isSubmitting={voidSubmitting}
+      />
     </div>
   );
 }

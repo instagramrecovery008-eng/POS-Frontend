@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { KeyRound, Loader2, CheckCircle2, AlertTriangle, ArrowRight, Eye, EyeOff } from 'lucide-react';
 import { authApi } from '../../../api/auth.api';
+import BrandLogo from '../../../components/common/BrandLogo';
 
 /**
  * Secure password SETUP (public, pre-auth).
@@ -83,12 +84,11 @@ export default function SetPasswordPage({ email, token, onDone }) {
   return (
     <div className="min-h-[100dvh] bg-[#F8FAFC] flex flex-col items-center justify-center px-4 py-6 pt-safe pb-safe font-sans">
       {/* Platform branding */}
-      <div className="mb-5 flex items-center gap-2.5">
-        <img src="/klargo-icon.png" alt="KlarGo" className="w-11 h-11 rounded-[12px] object-cover bg-white border border-slate-200 shadow-sm" />
-        <div className="text-left">
-          <h1 className="text-lg font-extrabold tracking-tight text-[#16A34A] uppercase leading-none">KlarGo POS</h1>
-          <p className="text-[10px] text-[#16A34A]/80 font-bold uppercase tracking-wider mt-1">By Infinixo Technologies</p>
-        </div>
+      <div className="mb-5 flex flex-col items-center gap-1.5">
+        <BrandLogo priority className="h-14 w-[190px] sm:h-16 sm:w-[220px]" />
+        <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-emerald-700">
+          Secure Password Setup
+        </p>
       </div>
 
       <div className="w-full max-w-md bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
@@ -134,7 +134,7 @@ export default function SetPasswordPage({ email, token, onDone }) {
             </div>
 
             <p className="text-[11px] font-semibold text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 mb-4 leading-relaxed">
-              Choose a strong password for your KlarGo POS account. For your security, this link works once and expires
+              Choose a strong password for your QWIKOUT POS account. For your security, this link works once and expires
               shortly — we never send passwords by email.
             </p>
 
@@ -212,7 +212,7 @@ export default function SetPasswordPage({ email, token, onDone }) {
             </div>
             <h2 className="text-base font-extrabold text-slate-800">Your password is set</h2>
             <p className="text-xs text-slate-500 mt-2 leading-relaxed">
-              You can now sign in to KlarGo POS with your email and the new password.
+              You can now sign in to QWIKOUT POS with your email and the new password.
             </p>
             <button
               type="button"

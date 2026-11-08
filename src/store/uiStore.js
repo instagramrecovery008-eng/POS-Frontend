@@ -1,5 +1,8 @@
 import { create } from 'zustand';
 
+// Monotonic counter for toast ids (see addToast).
+let toastSeq = 0;
+
 const useUiStore = create((set) => ({
   // Sidebar
   sidebarCollapsed: false,
@@ -40,6 +43,13 @@ const useUiStore = create((set) => ({
       }
       return { currentScreen: screen, navHistory: history };
     }),
+  // Which POS Settings tab to open. "Configure Printer" on the kitchen/printer
+  // status panel sets this before navigating, so the user lands on the
+  // Printer tab instead of the default General tab. Consumed once by
+  // SettingsPage (it resets to 'general').
+  settingsSection: 'general',
+  setSettingsSection: (section) => set({ settingsSection: section || 'general' }),
+
   /** Navigate back to the previous screen (used by the Back button). */
   goBack: (fallback = 'dashboard') =>
     set((state) => {
@@ -55,7 +65,11 @@ const useUiStore = create((set) => ({
   // Notifications/Toast
   toasts: [],
   addToast: (message, type = 'success') => {
-    const id = Date.now().toString();
+    // Monotonic suffix: two toasts raised in the same millisecond used to get
+    // the SAME id, which React reported as "two children with the same key"
+    // (and could drop one of the notifications entirely).
+    toastSeq += 1;
+    const id = `toast-${Date.now()}-${toastSeq}`;
     set((state) => ({
       toasts: [...state.toasts, { id, message, type }],
     }));
@@ -67,6 +81,11 @@ const useUiStore = create((set) => ({
   },
   removeToast: (id) =>
     set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),
+
+  // One-shot message shown on the login screen (e.g. "Your session expired."),
+  // set by the 401 handler before the app returns to the authentication flow.
+  loginNotice: '',
+  setLoginNotice: (message) => set({ loginNotice: message || '' }),
 
   // API Error
   apiError: null,
