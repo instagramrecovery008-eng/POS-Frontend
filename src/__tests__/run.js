@@ -5,7 +5,7 @@
  * Covers the acceptance matrix without a browser test runner:
  *   1. Centralized canHandleBilling capability (permissions.js)
  *   2. Screen-level access (Kitchen Tickets vs Active Orders)
- *   3. Payment-success screen actions (Email removed, Print/Reprint/Done kept)
+ *   3. Payment-success screen actions (Email removed, Print/Reprint kept, Done removed — auto-return after print)
  *   4. Source-level visibility smoke tests — every payment/bill action in the UI
  *      is gated by the centralized canHandleBilling helper, never a scattered
  *      inline role check.
@@ -113,10 +113,16 @@ check(!/onEmail/.test(billingPage), 'no onEmail prop / handler remains');
 check(!/Mail className=/.test(billingPage), 'no Mail icon button remains');
 check(!/handleEmail/.test(billingPage), 'no handleEmail handler remains');
 
-sub('For every role — PRINT RECEIPT / REPRINT / DONE exist');
+sub('For every role — PRINT RECEIPT / REPRINT exist; no DONE button (printing returns to the POS automatically)');
 check(billingPage.includes('Print Receipt'), 'Print Receipt present');
 check(billingPage.includes('Reprint'), 'Reprint present');
-check(billingPage.includes('Done'), 'Done present');
+check(!/<Check className="w-3\.5 h-3\.5" \/> Done/.test(billingPage) && !/onDone/.test(billingPage), 'no Done button / onDone prop on the success screen');
+check(/const handlePrint = \(\) => runPrintAction\(doPrint\);/.test(billingPage) && /const handleReprint = \(\) => runPrintAction\(doReprint\);/.test(billingPage), 'print and reprint both go through the auto-return wrapper');
+check(/if \(printBusyRef\.current\) return;/.test(billingPage), 'a double tap cannot open two print windows');
+check(/if \(printedRef\.current\) \{[\s\S]*?handleDone\(\)/.test(billingPage), 'after a successful print the screen returns to the POS on its own');
+check((billingPage.match(/printedRef\.current = true;/g) || []).length === 4, 'auto-return arms only after the receipt was sent to print (4 success paths)');
+check(/autoPrintBill\)[\s\S]*?setTimeout\(\(\) => \{ handleDone\(\); \}, 1500\)/.test(billingPage), 'auto-print at payment time also returns to the POS');
+check(/aria-label="Close and return to POS"/.test(billingPage), 'a discreet close (X) remains for finishing without a receipt');
 
 sub('Payment overlay is gated for non-billing roles');
 check(billingPage.includes('canHandleBilling'), 'uses centralized canHandleBilling');

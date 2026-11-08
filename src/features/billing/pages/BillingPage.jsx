@@ -1016,7 +1016,7 @@ function SplitPayment({ onPaymentsChange, grandTotal, currency }) {
 }
 
 // ─── Success Screen — compact cashier summary from the persisted bill response ──
-function SuccessScreen({ bill, currency, cashReceived, onPrint, onReprint, onDone }) {
+function SuccessScreen({ bill, currency, cashReceived, onPrint, onReprint }) {
   const payments = bill?.payments || [];
   const grandTotal = Number(bill?.grandTotal || 0);
   const amountPaid = payments.length > 0
@@ -1140,13 +1140,6 @@ function SuccessScreen({ bill, currency, cashReceived, onPrint, onReprint, onDon
             flex items-center justify-center gap-1.5 cursor-pointer"
         >
           <RotateCcw className="w-3.5 h-3.5" /> Reprint
-        </button>
-        <button
-          onClick={onDone}
-          className="flex-1 min-w-[110px] h-11 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl text-[10px] 
-            uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
-        >
-          <Check className="w-3.5 h-3.5" /> Done
         </button>
       </div>
     </div>
@@ -1364,6 +1357,8 @@ export default function BillingPage() {
               billPayload,
               orderDetails
             ));
+            if (returnTimerRef.current) clearTimeout(returnTimerRef.current);
+            returnTimerRef.current = setTimeout(() => { handleDone(); }, 1500);
           }
         } catch (printErr) {
           // Non-critical
@@ -1457,7 +1452,7 @@ export default function BillingPage() {
   };
 
   // ── Receipt Actions ──
-  const handlePrint = async () => {
+  const doPrint = async () => {
     let billId = billData?.id || billData?.bill?.id;
     let currentBillData = billData;
     let currentOrderDetails = orderDetails;
@@ -1495,11 +1490,13 @@ export default function BillingPage() {
       if (currentBillData && currentOrderDetails) {
         openBillPrintPreview(buildPrintData(currentBillData, currentOrderDetails));
         addToast(`Bill #${currentBillData.billNo || billId} printed successfully!`, 'success');
+        printedRef.current = true;
       } else if (currentBillData) {
         // Use bill data alone (order data may be embedded)
         const embeddedOrder = currentBillData.order || {};
         openBillPrintPreview(buildPrintData(currentBillData, embeddedOrder));
         addToast(`Bill #${currentBillData.billNo || billId} printed successfully!`, 'success');
+        printedRef.current = true;
       } else {
         addToast('Bill data not available for print preview.', 'warning');
       }
@@ -1508,7 +1505,7 @@ export default function BillingPage() {
     }
   };
 
-  const handleReprint = async () => {
+  const doReprint = async () => {
     let billId = billData?.id || billData?.bill?.id;
     let currentBillData = billData;
     let currentOrderDetails = orderDetails;
@@ -1544,10 +1541,12 @@ export default function BillingPage() {
       if (currentBillData && currentOrderDetails) {
         openBillPrintPreview(buildPrintData(currentBillData, currentOrderDetails));
         addToast(`Bill #${currentBillData.billNo || billId} reprinted successfully!`, 'success');
+        printedRef.current = true;
       } else if (currentBillData) {
         const embeddedOrder = currentBillData.order || {};
         openBillPrintPreview(buildPrintData(currentBillData, embeddedOrder));
         addToast(`Bill #${currentBillData.billNo || billId} reprinted successfully!`, 'success');
+        printedRef.current = true;
       } else {
         addToast('Bill data not available for print preview.', 'warning');
       }
@@ -1556,7 +1555,34 @@ export default function BillingPage() {
     }
   };
 
+  // ── Print → automatically back to the POS (no "Done" press) ──
+  // The bill prints in its own browser window, so closing this overlay does not
+  // interrupt the print. One print per tap; the overlay closes shortly after the
+  // receipt has actually been sent to print.
+  const returnTimerRef = useRef(null);
+  const printBusyRef = useRef(false);
+  const printedRef = useRef(false);
+  useEffect(() => () => { if (returnTimerRef.current) clearTimeout(returnTimerRef.current); }, []);
+
+  const runPrintAction = async (action) => {
+    if (printBusyRef.current) return;
+    printBusyRef.current = true;
+    printedRef.current = false;
+    try {
+      await action();
+    } finally {
+      printBusyRef.current = false;
+    }
+    if (printedRef.current) {
+      if (returnTimerRef.current) clearTimeout(returnTimerRef.current);
+      returnTimerRef.current = setTimeout(() => { handleDone(); }, 1200);
+    }
+  };
+  const handlePrint = () => runPrintAction(doPrint);
+  const handleReprint = () => runPrintAction(doReprint);
+
   const handleDone = () => {
+    if (returnTimerRef.current) clearTimeout(returnTimerRef.current);
     setCheckoutOrderId(null);
     setSuccess(false);
     setBillData(null);
@@ -1673,14 +1699,22 @@ export default function BillingPage() {
     if (success) {
       return (
         <div className="min-h-full flex items-center justify-center p-2 sm:p-3">
-          <div className="bg-white rounded-[20px] border border-slate-200 p-5 shadow-xs w-full max-w-md">
+          <div className="relative bg-white rounded-[20px] border border-slate-200 p-5 shadow-xs w-full max-w-md">
+            {/* Printing returns to the POS automatically; this X is only for finishing without a receipt. */}
+            <button
+              type="button"
+              onClick={handleDone}
+              aria-label="Close and return to POS"
+              className="absolute top-3 right-3 p-1.5 rounded-lg text-slate-300 hover:text-slate-500 hover:bg-slate-100 cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
             <SuccessScreen
               bill={billData}
               currency={currency}
               cashReceived={lastCashReceived}
               onPrint={handlePrint}
               onReprint={handleReprint}
-              onDone={handleDone}
             />
           </div>
         </div>
